@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="DTOs/ScheduleJobRequest.fs" />
+    <Compile Include="DTOs/ScheduleJobResponse.fs" />
+    <Compile Include="DTOs/SystemMetricsResponse.fs" />
+    <Compile Include="Controllers/JobsController.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ordo.Core\Ordo.Core.fsproj" />
+    <ProjectReference Include="..\Ordo.Synchroniser\Ordo.Synchroniser.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EventStore.Client.Grpc.Streams" Version="23.3.8" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+  </ItemGroup>
+
+</Project>
