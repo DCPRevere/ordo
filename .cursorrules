@@ -1,0 +1,23 @@
+## Ordo Project Context
+
+This project implements the Ordo job scheduling system.
+
+*   **Language:** F#
+*   **Platform:** .NET 9 (using .NET 8 currently)
+*   **Architecture:** Distributed microservices using Event Sourcing.
+*   **Event Store:** KurrentDB 25 (using EventStoreDB client `EventStore.Client.Grpc.Streams` v23.3.8)
+*   **Core Components:**
+    *   `Ordo.Core`: Shared domain logic, event types, state reconstruction.
+    *   `Ordo.Api`: HTTP API for scheduling/cancelling jobs.
+    *   `Ordo.Timekeeper`: Triggers jobs based on time by writing `JobTriggered` events.
+    *   `Ordo.Executor`: Processes `JobTriggered` events, executes logic, writes `JobExecuted` events.
+*   **Event Streams:** Stored in KurrentDB, prefixed `ordo-`. Job streams are `ordo-job-<guid>`.
+*   **State Reconstruction:** `Ordo.Core` contains logic (`JobState.fs`) to rebuild job state from its event stream.
+
+## Coding Rules
+
+*   **No Comments:** Do not add comments to the code unless explaining something highly non-obvious or complex. The F# code should be self-explanatory.
+*   **Immutability:** Favor immutable data structures and pure functions where possible.
+*   **Async:** Use `task { ... }` computation expressions for asynchronous operations.
+*   **Pattern Matching:** Utilize pattern matching extensively for control flow and data handling.
+*   **Domain Types:** Define clear F# types (records, discriminated unions) for domain concepts in `Ordo.Core`. 
