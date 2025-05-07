@@ -43,7 +43,7 @@ let initialState (jobId: Guid) : Job =
 let applyEvent (currentState: Job) (event: JobEvent) : Job =
     match event with
     | EventScheduled evt ->
-        if currentState.Status = JobStatus.StatusUnknown || currentState.Id = evt.JobId then
+        if currentState.Status = JobStatus.StatusUnknown && currentState.Id = evt.JobId then
             { currentState with
                 Id = evt.JobId
                 Status = JobStatus.StatusScheduled

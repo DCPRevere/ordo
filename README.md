@@ -1,54 +1,87 @@
-# Ordo Project: Runtime Architecture Specification
+# Ordo: time-based job processing
 
-## 1. Overview
+## Quick start
 
-This document outlines the runtime architecture for the **Ordo** software project. The core of the system involves processing jobs scheduled via an API and triggered based on time, using an event-sourcing approach with KurrentDB.
+Each component can be run separately, with multiple instances of each, or using Ordo.Host you can run all components in a single application:
 
-* **Event Store:** KurrentDB 25 serves as the central event store. All streams are prefixed with `ordo-`. Job-related events (e.g., `JobScheduled`, `JobTriggered`, `JobExecuted`, `JobCancelled`) are written to specific job streams within KurrentDB. The stream naming convention for individual job lifecycles follows the pattern `ordo-job-<guid>`. Other system or aggregate streams will also follow the `ordo-` prefix convention (e.g., `ordo-timekeeper-projection`).
-* **Executor Group:** A logical concept representing the pool of **Ordo.Executor** instances. KurrentDB subscriptions manage the distribution of relevant events (like `JobTriggered`) to these instances.
+```bash
+dotnet run --project src/Ordo.Host/Ordo.Host.fsproj --all
+```
 
-## 2. Technology Stack
+Schedule a job to run at a specific time:
 
-* **Language:** F#
-* **Platform:** .NET 9
-* **Database / Event Store:** KurrentDB 25
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"scheduledTime": "2025-05-07T09:07:00Z", "payload": "test job"}' \
+  https://localhost:5001/api/jobs
+```
 
-## 3. Architecture
+Response:
+```json
+{
+  "jobId": "819a1868-3824-4a6f-b408-316c807ee661"
+}
+```
 
-Ordo utilizes a distributed, microservices-based architecture built on event sourcing principles with KurrentDB.
+The job will be executed at the specified time. You can monitor its progress through the logs:
 
-**System Components:**
+```
+[10:06:54] Scheduling new job 819a1868-3824-4a6f-b408-316c807ee661 for 05/07/2025 09:07:00 +00:00
+[10:07:00] Triggering job 819a1868-3824-4a6f-b408-316c807ee661
+[10:07:00] Processing job 819a1868-3824-4a6f-b408-316c807ee661
+[10:07:00] Successfully executed job 819a1868-3824-4a6f-b408-316c807ee661
+```
 
-1.  **Ordo.Core (Shared Library):**
-    * **Responsibility:** A shared F# library containing common domain logic and types. Crucially, it includes the logic required to rebuild the state of a job entity by processing a sequence of its events read from a KurrentDB stream (e.g., `ordo-job-<guid>`). This ensures consistent state interpretation across different services.
-    * **Usage:** Referenced by `Ordo.Timekeeper` (for its projection) and `Ordo.Executor` (to understand the job state before execution).
+## Overview
 
-2.  **Ordo.Api:**
-    * **Responsibility:** Provides an HTTP API for clients to schedule new jobs and request job cancellations. Upon receiving a valid scheduling request, it writes a `JobScheduled` event to the corresponding `ordo-job-<guid>` stream in KurrentDB. Cancellation requests would similarly result in a `JobCancelled` event being written to the appropriate stream.
-    * **Scalability:** A single instance of this service is required. High availability, if needed, should be managed through infrastructure mechanisms (e.g., automated restarts or orchestration platform features) rather than multiple load-balanced instances.
+Ordo is a distributed job scheduling system built with F# and .NET 9. It uses event sourcing with KurrentDB to provide reliable, scalable job processing with strong consistency guarantees.
 
-3.  **Ordo.Timekeeper:**
-    * **Responsibility:** Subscribes to all event streams from KurrentDB. It uses a synchronizer component, leveraging logic from **Ordo.Core**, to build and maintain an in-memory projection of the current state of all active, scheduled jobs based on the events it reads. On a regular tick (timer interval), it identifies jobs whose scheduled time has arrived and attempts to write a `JobTriggered` event to the respective `ordo-job-<guid>` stream in KurrentDB.
-    * **Concurrency Control:** It uses KurrentDB's expected version feature when writing the `JobTriggered` event. If the write fails because the stream version is different than expected, it indicates that another **Ordo.Timekeeper** instance has already successfully triggered the job. In this case, the current instance simply ignores the failure and moves on to the next job, ensuring exactly-once triggering without requiring leader election.
-    * **Scalability:** Multiple instances can run concurrently for high availability and potentially distributing the projection load (depending on the subscription strategy). The optimistic concurrency check on write guarantees correctness.
+Key features:
+- Schedule jobs to run at specific times
+- Distributed execution across multiple nodes
+- Event-sourced job history
+- High availability and scalability
+- No single point of failure
 
-4.  **Ordo.Executor:**
-    * **Responsibility:** Instances of this service subscribe to relevant event streams or categories in KurrentDB, specifically listening for `JobTriggered` events. Upon receiving a trigger event, an Executor instance reads all events from the corresponding `ordo-job-<guid>` stream. It uses the logic within **Ordo.Core** to rebuild the current state of the job entity. Based on this state, it executes the required processing logic. After successful execution, it writes a `JobExecuted` event back to the `ordo-job-<guid>` stream in KurrentDB. Finally, it acknowledges (ACKs) the `JobTriggered` event to the KurrentDB subscription to prevent reprocessing. Error handling (e.g., writing a `JobFailed` event, NACKing the message) would occur if execution fails.
-    * **Scalability:** **Designed to run as multiple instances.** KurrentDB subscriptions (e.g., persistent subscriptions competing for events) distribute the `JobTriggered` events among the available **Ordo.Executor** instances. This allows for parallel processing, horizontal scaling (adding more instances to increase throughput), and high availability.
+## Architecture
 
-## 4. Running Multiple Instances
+The system consists of four main components:
 
-* **Ordo.Api:** No, runs as a single instance.
-* **Ordo.Timekeeper:** Yes, runs as multiple active instances, relying on optimistic concurrency for safe concurrent operation.
-* **Ordo.Executor:** **Yes, runs as multiple instances.** This leverages KurrentDB's subscription capabilities for parallel processing, scalability, and high availability.
+1. **Ordo.Core** - Shared domain logic and types
+2. **Ordo.Api** - HTTP API for job scheduling
+3. **Ordo.Timekeeper** - Triggers jobs at their scheduled times
+4. **Ordo.Executor** - Performs the job when it is triggered
 
-## 5. Summary
+### Event flow
 
-The architecture for Ordo consists of:
+1. **Job Scheduling**
+   - Client sends request to `Ordo.Api`
+   - API writes `JobScheduled` event to job's stream (`ordo-job-<guid>`)
+   - `Ordo.Timekeeper` picks up the event and updates its in-memory projection
 
-* A shared **Ordo.Core** library (F#/.NET 9) for job entity state reconstruction.
-* A single-instance **Ordo.Api** service (F#/.NET 9) accepting HTTP requests and writing `JobScheduled` events to KurrentDB 25 streams (prefixed `ordo-job-<guid>`).
-* Multiple concurrently running **Ordo.Timekeeper** services (F#/.NET 9) maintaining an in-memory state from KurrentDB events (using **Ordo.Core**) and writing `JobTriggered` events at scheduled times using optimistic concurrency checks.
-* Multiple instances of the **Ordo.Executor** service (F#/.NET 9) subscribing to `JobTriggered` events, rebuilding job state using **Ordo.Core**, executing the job logic, writing a `JobExecuted` event back to KurrentDB, and acknowledging the trigger event.
+2. **Job Triggering**
+   - `Ordo.Timekeeper` maintains a projection of all scheduled jobs
+   - On each tick, it checks for due jobs in its projection
+   - When a job is due, it attempts to write a `JobTriggered` event
+   - Uses optimistic concurrency to ensure exactly-once triggering
+   - Multiple Timekeeper instances can run safely in parallel
 
-This event-sourced approach using F#, .NET 9, and KurrentDB provides a robust, scalable, and traceable system for job processing, leveraging optimistic concurrency for the Timekeeper component.
+3. **Job Execution**
+   - `Ordo.Executor` instances compete for `JobTriggered` events
+   - Each event is processed by exactly one Executor
+   - Executor rebuilds job state from its event stream
+   - Performs the job's work
+   - Writes `JobExecuted` or `JobFailed` event
+   - Acknowledges the trigger event to prevent reprocessing
+
+4. **State Updates**
+   - All components maintain their own projections
+   - Events are the source of truth
+   - State is always rebuilt from the event stream
+   - Strong consistency through event sourcing
+
+### Scalability
+
+- **Api**: Single instance (stateless)
+- **Timekeeper**: Multiple instances with optimistic concurrency
+- **Executor**: Multiple instances for parallel processing

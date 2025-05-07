@@ -14,9 +14,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="EventStore.Client.Grpc.PersistentSubscriptions" Version="23.3.8" />
+    <PackageReference Include="EventStore.Client.Grpc.Streams" Version="23.3.8" />
+    <PackageReference Include="EventStore.Client.Grpc" Version="23.3.8" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Ordo.Core\Ordo.Core.fsproj" />
+    <ProjectReference Include="..\Ordo.Synchroniser\Ordo.Synchroniser.fsproj" />
   </ItemGroup>
 </Project>

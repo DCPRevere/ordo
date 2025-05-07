@@ -54,10 +54,29 @@ let private tryDeserialize<'T> (data: ReadOnlyMemory<byte>) : 'T option =
     with _ -> None
 
 let tryParseJobEvent (resolvedEvent: ResolvedEvent) : JobEvent option =
-    match resolvedEvent.Event.EventType with
-    | "JobScheduled" -> tryDeserialize<JobScheduled> resolvedEvent.Event.Data |> Option.map EventScheduled
-    | "JobTriggered" -> tryDeserialize<JobTriggered> resolvedEvent.Event.Data |> Option.map EventTriggered
-    | "JobExecuted" -> tryDeserialize<JobExecuted> resolvedEvent.Event.Data |> Option.map EventExecuted
-    | "JobCancelled" -> tryDeserialize<JobCancelled> resolvedEvent.Event.Data |> Option.map EventCancelled
-    | "JobFailed" -> tryDeserialize<JobFailed> resolvedEvent.Event.Data |> Option.map EventFailed
-    | _ -> None // Ignore unknown event types 
+    if isNull resolvedEvent.Event then
+        None
+    else
+        let eventType = resolvedEvent.Event.EventType
+        match eventType with
+        | "JobScheduled" -> 
+            match tryDeserialize<JobScheduled> resolvedEvent.Event.Data with
+            | Some data -> Some (EventScheduled data)
+            | None -> None
+        | "JobTriggered" -> 
+            match tryDeserialize<JobTriggered> resolvedEvent.Event.Data with
+            | Some data -> Some (EventTriggered data)
+            | None -> None
+        | "JobExecuted" -> 
+            match tryDeserialize<JobExecuted> resolvedEvent.Event.Data with
+            | Some data -> Some (EventExecuted data)
+            | None -> None
+        | "JobCancelled" -> 
+            match tryDeserialize<JobCancelled> resolvedEvent.Event.Data with
+            | Some data -> Some (EventCancelled data)
+            | None -> None
+        | "JobFailed" -> 
+            match tryDeserialize<JobFailed> resolvedEvent.Event.Data with
+            | Some data -> Some (EventFailed data)
+            | None -> None
+        | _ -> None // Ignore unknown event types 

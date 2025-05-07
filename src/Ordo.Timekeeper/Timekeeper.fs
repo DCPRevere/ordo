@@ -42,14 +42,23 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
             task {
                 do! synchroniser.Stop(cancellationTokenSource.Token)
                 cancellationTokenSource.Cancel()
+                cancellationTokenSource.Dispose()
             }
 
     member private this.RunAsync(ct: CancellationToken) =
         task {
             try
                 while not ct.IsCancellationRequested do
-                    do! this.CheckAndTriggerJobsAsync()
-                    do! Task.Delay(config.CheckInterval, ct)
+                    try
+                        do! this.CheckAndTriggerJobsAsync()
+                        do! Task.Delay(config.CheckInterval, ct)
+                    with
+                    | :? OperationCanceledException ->
+                        logger.LogInformation("Timekeeper operation canceled")
+                        return ()
+                    | ex ->
+                        logger.LogError(ex, "Error in Timekeeper main loop")
+                        do! Task.Delay(TimeSpan.FromSeconds(1), ct)
             with
             | :? OperationCanceledException ->
                 logger.LogInformation("Timekeeper stopped")
@@ -60,7 +69,8 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
     member private this.CheckAndTriggerJobsAsync() =
         task {
             try
-                let dueJobs = synchroniser.GetDueJobs(DateTimeOffset.UtcNow)
+                let now = DateTimeOffset.UtcNow
+                let dueJobs = this.GetDueJobs(now)
                 for (job, version) in dueJobs do
                     do! this.TriggerJobAsync(job, version)
             with ex ->
@@ -71,6 +81,7 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
         task {
             try
                 let now = DateTimeOffset.UtcNow
+                logger.LogInformation("Triggering job {JobId} (scheduled for {ScheduledTime})", job.Id, job.ScheduledTime)
                 let event = {
                     JobId = job.Id
                     TriggerTime = now
@@ -84,13 +95,18 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
                 )
                 let! result = esClient.AppendToStreamAsync(
                     $"ordo-job-{job.Id}",
-                    StreamRevision(version),
+                    StreamRevision version,
                     [| eventData |]
                 )
-                logger.LogInformation("Triggered job {JobId}", job.Id)
+                logger.LogInformation("Successfully triggered job {JobId}", job.Id)
             with
             | :? WrongExpectedVersionException ->
                 logger.LogInformation("Job {JobId} already triggered by another instance", job.Id)
             | ex ->
                 logger.LogError(ex, "Error triggering job {JobId}", job.Id)
-        } 
+        }
+
+    member this.GetDueJobs(currentTime: DateTimeOffset) : (Job * uint64) list =
+        let dueJobs = synchroniser.GetDueJobs(currentTime)
+        logger.LogInformation("Found {DueCount} due jobs out of {TotalCount} total jobs", dueJobs.Length, synchroniser.GetMetrics().TotalJobs)
+        dueJobs 

@@ -13,7 +13,7 @@ type TimekeeperService(esClient: EventStoreClient, loggerFactory: ILoggerFactory
     
     let logger = loggerFactory.CreateLogger<TimekeeperService>()
     let timekeeperConfig = {
-        EventStoreConnectionString = config.GetValue<string>("EventStore:ConnectionString")
+        EventStoreConnectionString = config.GetValue<string>("EventStore:ConnectionString") |> Option.ofObj |> Option.defaultValue ""
         CheckInterval = TimeSpan.FromSeconds(
             config.GetValue<int>("Timekeeper:CheckIntervalSeconds", 10)
         )
@@ -23,18 +23,22 @@ type TimekeeperService(esClient: EventStoreClient, loggerFactory: ILoggerFactory
 
     override _.ExecuteAsync(ct: CancellationToken) =
         task {
+            logger.LogInformation("Starting Timekeeper service")
+            let! _ = timekeeper.Start()
+            
             try
-                logger.LogInformation("Starting Timekeeper service...")
-                let! _ = timekeeper.Start()
-                
                 while not ct.IsCancellationRequested do
                     do! Task.Delay(1000, ct)
-                    
-                logger.LogInformation("Timekeeper service stopping...")
-            finally
-                timekeeper.Stop() |> ignore
+            with
+            | :? OperationCanceledException ->
+                logger.LogInformation("Timekeeper service stopping")
+            | ex ->
+                logger.LogError(ex, "Timekeeper service error")
+            
+            let! _ = timekeeper.Stop()
+            return ()
         }
 
     override _.StopAsync(ct: CancellationToken) =
-        logger.LogInformation("Stopping Timekeeper service...")
-        base.StopAsync(ct) 
+        logger.LogInformation("Stopping Timekeeper service")
+        Task.CompletedTask 

@@ -28,7 +28,8 @@ type SynchroniserState =
       Logger: ILogger
       Jobs: ConcurrentDictionary<Guid, JobStateWithVersion>
       mutable Subscription: IDisposable option
-      Metrics: SynchroniserMetrics }
+      Metrics: SynchroniserMetrics
+      mutable IsStartupPhase: bool }
 
 type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
     let metrics = {
@@ -45,80 +46,98 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
           Logger = logger
           Jobs = ConcurrentDictionary<Guid, JobStateWithVersion>() 
           Subscription = None
-          Metrics = metrics }
+          Metrics = metrics
+          IsStartupPhase = true }
 
     let handleEvent (subscription: StreamSubscription) (resolvedEvent: ResolvedEvent) (cancellationToken: CancellationToken) : Task =
         task {
+            if not (resolvedEvent.OriginalStreamId.StartsWith("ordo-job-")) then
+                return ()
+            
+            if state.IsStartupPhase then
+                logger.LogDebug("Processing startup event from stream {StreamId}", resolvedEvent.OriginalStreamId)
+            else
+                logger.LogDebug("Received job event from stream {StreamId}", resolvedEvent.OriginalStreamId)
+            
             match tryParseJobEvent resolvedEvent with
             | Some jobEvent ->
                 let jobId = getJobId jobEvent
                 try
                     let updateAction (current: JobStateWithVersion) =
                         let updatedJob = applyEvent current.Job jobEvent
+                        if not state.IsStartupPhase && current.Job.Status <> updatedJob.Status then
+                            logger.LogInformation("Job {JobId} status changed: {OldStatus} -> {NewStatus}", 
+                                jobId, current.Job.Status, updatedJob.Status)
                         { Job = updatedJob; Version = (uint64 (resolvedEvent.Event.EventNumber.ToInt64())) }
 
                     let newJobState = state.Jobs.AddOrUpdate(
                         jobId, 
-                        { Job = initialState jobId; Version = (uint64 (resolvedEvent.Event.EventNumber.ToInt64())) },
+                        (fun _ -> 
+                            let initialJob = initialState jobId
+                            let updatedJob = applyEvent initialJob jobEvent
+                            if not state.IsStartupPhase then
+                                logger.LogInformation("New job {JobId} created with status {Status}", 
+                                    jobId, updatedJob.Status)
+                            { Job = updatedJob; Version = (uint64 (resolvedEvent.Event.EventNumber.ToInt64())) }),
                         (fun _ existing -> updateAction existing)
                     )
 
-                    state.Metrics.EventsProcessed <- state.Metrics.EventsProcessed + 1L
-                    state.Metrics.LastEventProcessed <- DateTimeOffset.UtcNow
-                    state.Metrics.TotalJobs <- int64 state.Jobs.Count
+                    metrics.EventsProcessed <- metrics.EventsProcessed + 1L
+                    metrics.LastEventProcessed <- DateTimeOffset.UtcNow
+                    metrics.TotalJobs <- int64 state.Jobs.Count
 
-                    state.Logger.LogDebug("Processed {JobEventType} for job {JobId}. New status: {Status}", 
-                                           jobEvent.GetType().Name, jobId, newJobState.Job.Status)
+                    if not state.IsStartupPhase then
+                        logger.LogDebug("Processed {JobEventType} for job {JobId}", 
+                            jobEvent.GetType().Name, jobId)
                 with ex ->
-                    state.Metrics.ProcessingErrors <- state.Metrics.ProcessingErrors + 1L
-                    state.Logger.LogError(ex, "Failed to apply {JobEventType} for job {JobId} from stream {StreamId}", 
-                                           jobEvent.GetType().Name, jobId, resolvedEvent.OriginalStreamId)
-            | None -> 
-                if resolvedEvent.Event.EventType.StartsWith("$") |> not then
-                    state.Logger.LogTrace("Ignoring event type {EventType} from stream {StreamId}", 
-                                          resolvedEvent.Event.EventType, resolvedEvent.OriginalStreamId)
-                ()
+                    metrics.ProcessingErrors <- metrics.ProcessingErrors + 1L
+                    logger.LogError(ex, "Failed to apply {JobEventType} for job {JobId}", 
+                        jobEvent.GetType().Name, jobId)
+            | None -> ()
         } :> Task
 
     let subscriptionDropped (subscription: StreamSubscription) (reason: SubscriptionDroppedReason) (ex: Exception) =
-        state.Metrics.SubscriptionDrops <- state.Metrics.SubscriptionDrops + 1L
-        state.Metrics.LastSubscriptionDrop <- Some DateTimeOffset.UtcNow
+        metrics.SubscriptionDrops <- metrics.SubscriptionDrops + 1L
+        metrics.LastSubscriptionDrop <- Some DateTimeOffset.UtcNow
         
-        state.Logger.LogWarning("Subscription {SubscriptionId} dropped. Reason: {Reason}", subscription.SubscriptionId, reason)
+        logger.LogWarning("Subscription {SubscriptionId} dropped. Reason: {Reason}", subscription.SubscriptionId, reason)
         if ex <> null then 
-            state.Logger.LogError(ex, "Subscription dropped due to exception.")
+            logger.LogError(ex, "Subscription dropped due to exception.")
         
         state.Subscription <- None
 
     member _.Start(cancellationToken: CancellationToken) : Task =
         task {
             if state.Subscription.IsNone then
-                state.Logger.LogInformation("Starting projection synchroniser subscription to $all...")
+                logger.LogInformation("Starting projection synchroniser")
                 
                 let! sub = 
                     state.Client.SubscribeToAllAsync(
-                        FromAll.Start, 
+                        FromAll.Start,
                         eventAppeared = handleEvent, 
                         subscriptionDropped = subscriptionDropped,
                         cancellationToken = cancellationToken)
 
                 state.Subscription <- Some sub
-                state.Logger.LogInformation("Subscription started with ID: {SubscriptionId}", sub.SubscriptionId)
+                
+                // Wait a short time to process initial events
+                do! Task.Delay(TimeSpan.FromSeconds(2), cancellationToken)
+                state.IsStartupPhase <- false
+                
+                logger.LogInformation("Projection synchroniser ready with {JobCount} jobs loaded", state.Jobs.Count)
             else
-                 state.Logger.LogInformation("Subscription already active.")
-
+                 logger.LogInformation("Projection synchroniser already running")
         } :> Task
 
     member this.Stop(cancellationToken: CancellationToken) : Task =
         task {
             match state.Subscription with
             | Some sub ->
-                state.Logger.LogInformation("Stopping projection synchroniser subscription...")
+                logger.LogInformation("Stopping projection synchroniser")
                 sub.Dispose()
                 state.Subscription <- None
-                state.Logger.LogInformation("Subscription stopped.")
             | None -> 
-                state.Logger.LogInformation("Synchroniser subscription was not active.")
+                logger.LogInformation("Projection synchroniser not running")
             ()
         } :> Task
 
@@ -127,14 +146,23 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
         | true, state -> Some (state.Job, state.Version)
         | false, _ -> None
 
-    member _.GetDueJobs(currentTime: DateTimeOffset) : (Job * uint64) list =
-        state.Jobs.Values
-        |> Seq.filter (fun state -> 
-            match state.Job.Status, state.Job.ScheduledTime with
-            | JobStatus.StatusScheduled, Some scheduledTime when scheduledTime <= currentTime -> true
-            | _ -> false)
-        |> Seq.map (fun state -> (state.Job, state.Version))
-        |> List.ofSeq
+    member this.GetDueJobs(currentTime: DateTimeOffset) : (Job * uint64) list =
+        let dueJobs = 
+            state.Jobs.Values
+            |> Seq.filter (fun jobState -> 
+                match jobState.Job.Status with
+                | JobStatus.StatusScheduled ->
+                    match jobState.Job.ScheduledTime with
+                    | Some scheduledTime when scheduledTime <= currentTime ->
+                        true
+                    | _ -> false
+                | _ -> false
+            )
+            |> Seq.map (fun jobState -> (jobState.Job, jobState.Version))
+            |> List.ofSeq
+
+        logger.LogDebug("Found {DueCount} due jobs out of {TotalCount} total jobs", dueJobs.Length, state.Jobs.Count)
+        dueJobs
 
     member _.GetMetrics() : SynchroniserMetrics =
-        state.Metrics 
+        metrics 
