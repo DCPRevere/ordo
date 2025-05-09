@@ -21,3 +21,9 @@ type Schedule =
     | Immediate
     | Precise of DateTimeOffset
     | Configured of ConfiguredSchedule
+
+type JobTypeDelayConfig = {
+    DefaultDelay: string
+    MaxRetries: int
+    RetryDelayMultiplier: float
+}

@@ -7,6 +7,7 @@ open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Configuration
 open EventStore.Client
+open Ordo.Core
 open Ordo.Core.Events
 open Ordo.Core.EventStore
 open Ordo.Synchroniser
@@ -29,7 +30,7 @@ type TimekeeperService(
     let client = new EventStoreClient(settings)
     let httpClient = new HttpClient(BaseAddress = Uri(timekeeperConfig.ApiBaseUrl))
     let configService = new JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
-    let timekeeper = new Timekeeper(client, loggerFactory, timekeeperConfig)
+    let timekeeper = new Timekeeper(client, loggerFactory, timekeeperConfig, configService)
     
     let rec waitForApiReady (ct: CancellationToken) =
         task {

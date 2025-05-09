@@ -198,33 +198,35 @@ type JobsController(
 
     // GET /api/jobs/metrics
     [<HttpGet("metrics")>]
-    member this.GetSystemMetrics() : ActionResult<SystemMetricsResponse> =
-        logger.LogInformation("Retrieving system metrics")
-        let metrics = synchroniser.GetMetrics()
-        let _, status = synchroniser.GetStatus(DateTimeOffset.UtcNow)
-        let activeJobs = status.DueScheduled + status.Triggered |> int64
+    member this.GetSystemMetrics() : Task<ActionResult<SystemMetricsResponse>> =
+        task {
+            logger.LogInformation("Retrieving system metrics")
+            let metrics = synchroniser.GetMetrics()
+            let! (_, status) = synchroniser.GetStatus(DateTimeOffset.UtcNow)
+            let activeJobs = status.DueScheduled + status.Triggered |> int64
 
-        let healthStatus =
-            match metrics.LastSubscriptionDrop with
-            | Some lastDrop when lastDrop > DateTimeOffset.UtcNow.AddMinutes(-5.0) -> "Degraded"
-            | _ when metrics.ProcessingErrors > 0L -> "Warning"
-            | _ -> "Healthy"
+            let healthStatus =
+                match metrics.LastSubscriptionDrop with
+                | Some lastDrop when lastDrop > DateTimeOffset.UtcNow.AddMinutes(-5.0) -> "Degraded"
+                | _ when metrics.ProcessingErrors > 0L -> "Warning"
+                | _ -> "Healthy"
 
-        let response = {
-            TotalJobs = metrics.TotalJobs
-            ActiveJobs = activeJobs
-            EventsProcessed = metrics.EventsProcessed
-            LastEventProcessedAt = if metrics.LastEventProcessed = DateTimeOffset.MinValue then None else Some metrics.LastEventProcessed
-            SubscriptionDrops = metrics.SubscriptionDrops
-            LastSubscriptionDropAt = metrics.LastSubscriptionDrop
-            ProcessingErrors = metrics.ProcessingErrors
-            HealthStatus = healthStatus
+            let response = {
+                TotalJobs = metrics.TotalJobs
+                ActiveJobs = activeJobs
+                EventsProcessed = metrics.EventsProcessed
+                LastEventProcessedAt = if metrics.LastEventProcessed = DateTimeOffset.MinValue then None else Some metrics.LastEventProcessed
+                SubscriptionDrops = metrics.SubscriptionDrops
+                LastSubscriptionDropAt = metrics.LastSubscriptionDrop
+                ProcessingErrors = metrics.ProcessingErrors
+                HealthStatus = healthStatus
+            }
+
+            logger.LogInformation("System metrics: {TotalJobs} total jobs, {ActiveJobs} active jobs, health: {HealthStatus}", 
+                metrics.TotalJobs, activeJobs, healthStatus)
+
+            return ActionResult<SystemMetricsResponse>(response)
         }
-
-        logger.LogInformation("System metrics: {TotalJobs} total jobs, {ActiveJobs} active jobs, health: {HealthStatus}", 
-            metrics.TotalJobs, activeJobs, healthStatus)
-
-        ActionResult<SystemMetricsResponse>(response)
 
     // GET /api/jobs/all
     [<HttpGet("all")>]
@@ -232,7 +234,7 @@ type JobsController(
         task {
             logger.LogInformation("Retrieving all jobs")
             let now = DateTimeOffset.UtcNow
-            let _, status = synchroniser.GetStatus(now)
+            let! (_, status) = synchroniser.GetStatus(now)
             let jobs = synchroniser.GetAllJobs() |> List.map fst
 
             let response = {
