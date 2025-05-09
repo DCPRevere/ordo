@@ -9,6 +9,8 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Server.Kestrel.Core
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.Mvc
+open System.Text.Json
 open EventStore.Client
 open Ordo.Api
 open Ordo.Api.Controllers
@@ -86,9 +88,18 @@ module Host =
         configureServices builder.Services builder.Configuration comp
         
         builder.Services.AddControllers()
-            .AddApplicationPart(typeof<JobsController>.Assembly) |> ignore
+            .AddApplicationPart(typeof<JobsController>.Assembly)
+            .AddJsonOptions(fun options ->
+                Ordo.Core.Json.configure options.JsonSerializerOptions
+            ) |> ignore
         builder.Services.AddEndpointsApiExplorer() |> ignore
         builder.Services.AddSwaggerGen() |> ignore
+        builder.Services.AddDirectoryBrowser() |> ignore
+        
+        // Configure JSON serialization for all components
+        let jsonOptions = JsonSerializerOptions()
+        Ordo.Core.Json.configure jsonOptions
+        builder.Services.AddSingleton(jsonOptions) |> ignore
         
         builder.WebHost
             .UseKestrel(fun options ->
@@ -106,12 +117,22 @@ module Host =
 
         app.UseRouting() |> ignore
         app.UseHttpsRedirection() |> ignore
+        app.UseDefaultFiles(DefaultFilesOptions(
+            FileProvider = Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+                Path.Combine(AppContext.BaseDirectory, "wwwroot")
+            )
+        )) |> ignore
+        app.UseStaticFiles(StaticFileOptions(
+            FileProvider = Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+                Path.Combine(AppContext.BaseDirectory, "wwwroot")
+            )
+        )) |> ignore
         app.UseAuthorization() |> ignore
         
         app.MapControllers() |> ignore
         app.MapGet("/", fun context -> 
             task {
-                do! context.Response.WriteAsync("Ordo API is running")
+                context.Response.Redirect("/index.html")
             } :> Task) |> ignore
         
         app

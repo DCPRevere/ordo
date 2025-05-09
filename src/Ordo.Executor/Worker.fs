@@ -5,11 +5,12 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
-open Ordo.Core.JobState
+open Ordo.Core.Job
 open Ordo.Core.Events
 open Ordo.Synchroniser
 open EventStore.Client
 open System.Text.Json
+open Ordo.Core.Json
 
 // The Worker now requires EventStorePersistentSubscriptionsClient for persistent subscription operations
 type Worker(logger: ILogger<Worker>, 
@@ -19,24 +20,24 @@ type Worker(logger: ILogger<Worker>,
            ) =
     inherit BackgroundService()
     let mutable tickCount = 0
-    let subscriptionGroup = "ordo-executor"
+    let subscriptionGroup = "ordo-executor-1"
     let userCredentials = UserCredentials("admin", "changeit") // Define once
 
-    let writeJobExecutedEvent (jobId: Guid) (resultData: string) =
+    let writeJobExecutedEvent (jobId: string) (resultData: string) =
         task {
             let eventPayload = 
-                { JobId = jobId
+                { Metadata = { CorrelationId = jobId; CausationId = None; UserId = None; Timestamp = None }
+                  Id = jobId
                   ExecutionTime = DateTimeOffset.UtcNow
                   ResultData = resultData
                   Timestamp = DateTimeOffset.UtcNow }
             
             let effectiveStreamId = $"ordo-job-{jobId}"
-            let eventDataBytes = JsonSerializer.SerializeToUtf8Bytes(eventPayload)
-            let eventType = "JobExecuted"
+            let eventDataBytes = System.Text.Encoding.UTF8.GetBytes(Ordo.Core.Json.serialise eventPayload)
             
             let eventData = EventData(
                 Uuid.NewUuid(),
-                eventType,
+                JobExecutedV2.Schema.toString,
                 eventDataBytes,
                 ReadOnlyMemory<byte>.Empty)
             
@@ -50,15 +51,15 @@ type Worker(logger: ILogger<Worker>,
             logger.LogDebug("Wrote JobExecuted event for job {JobId}", jobId)
         }
 
-    let handleJobTriggeredEvent (triggered: JobTriggered) (subscription: PersistentSubscription) (resolvedEvent: ResolvedEvent) =
+    let handleJobTriggeredEvent (triggered: JobTriggeredV2) (subscription: PersistentSubscription) (resolvedEvent: ResolvedEvent) =
         task {
-            logger.LogInformation("Processing job {JobId}", triggered.JobId)
+            logger.LogInformation("Processing job {JobId}", triggered.Id)
             try
-                do! writeJobExecutedEvent triggered.JobId "Job executed successfully (via persistent subscription)"
+                do! writeJobExecutedEvent triggered.Id "Job executed successfully (via persistent subscription)"
                 do! subscription.Ack([| resolvedEvent |])
-                logger.LogInformation("Successfully executed job {JobId}", triggered.JobId)
+                logger.LogInformation("Successfully executed job {JobId}", triggered.Id)
             with ex ->
-                logger.LogError(ex, "Error executing job {JobId}", triggered.JobId)
+                logger.LogError(ex, "Error executing job {JobId}", triggered.Id)
                 do! subscription.Nack(PersistentSubscriptionNakEventAction.Park, $"Failed to execute: {ex.Message}", [| resolvedEvent |])
         }
 
@@ -93,19 +94,23 @@ type Worker(logger: ILogger<Worker>,
                     
                     logger.LogDebug("Received event {EventType} from stream {SourceStreamId} via persistent subscription", eventType, sourceStreamId)
                     
-                    match tryParseJobEvent resolvedEvt with 
-                    | Some jobEvent ->
-                        match jobEvent with
-                        | EventTriggered triggered ->
+                    match Schema.fromString eventType with
+                    | Some schema when schema = JobTriggeredV2.Schema ->
+                        let data = System.Text.Encoding.UTF8.GetString actualEvent.Data.Span
+                        match tryDeserialise<JobTriggeredV2> data with
+                        | Some triggered ->
+                            logger.LogInformation("Resolved JobTriggered event for job {JobId}", triggered.Id)
                             do! handleJobTriggeredEvent triggered subscription resolvedEvt
-                        | _ -> 
-                            logger.LogDebug("Ignoring non-triggered event type {EventType} for job {JobId}", 
-                                jobEvent.GetType().Name, getJobId jobEvent) 
-                            do! subscription.Ack([| resolvedEvt |])
-                    | None -> 
-                        logger.LogWarning("Could not parse event {EventType} from stream {SourceStreamId}. NACKing event.", 
+                        | None ->
+                            logger.LogWarning("Could not deserialize JobTriggered event data from stream {SourceStreamId}", sourceStreamId)
+                            do! subscription.Nack(PersistentSubscriptionNakEventAction.Park, "Could not deserialize event data", [| resolvedEvt |])
+                    | Some schema ->
+                        logger.LogDebug("Ignoring non-triggered event type {EventType} from stream {SourceStreamId}", eventType, sourceStreamId)
+                        do! subscription.Ack([| resolvedEvt |])
+                    | None ->
+                        logger.LogWarning("Could not parse event type {EventType} from stream {SourceStreamId}. NACKing event.", 
                             eventType, sourceStreamId)
-                        do! subscription.Nack(PersistentSubscriptionNakEventAction.Park, "Could not parse event data", [| resolvedEvt |])
+                        do! subscription.Nack(PersistentSubscriptionNakEventAction.Park, "Invalid event type format", [| resolvedEvt |])
             with ex ->
                 logger.LogError(ex, "Critical error in handleResolvedEvent. Attempting to NACK event.")
                 try
@@ -135,7 +140,7 @@ type Worker(logger: ILogger<Worker>,
             let settings = createSubscriptionSettings()
             try
                 logger.LogInformation("Attempting to create persistent subscription group {GroupName} for $all with JobTriggered filter", subscriptionGroup)
-                let eventFilter = EventTypeFilter.Prefix("JobTriggered")
+                let eventFilter = EventTypeFilter.Prefix(JobTriggeredV2.Schema.toString)
                 logger.LogDebug("Using event filter: {Filter}", eventFilter)
                 do! persistentSubClient.CreateToAllAsync(
                     subscriptionGroup,
@@ -213,21 +218,15 @@ type Worker(logger: ILogger<Worker>,
             while not stoppingToken.IsCancellationRequested do
                 let now = DateTimeOffset.UtcNow
                 let metrics = synchroniser.GetMetrics() 
-                let triggeredJobs = 
-                    synchroniser.GetDueJobs(now)
-                    |> List.filter (fun (job, _) -> job.Status = JobStatus.StatusTriggered)
+                let _, status = synchroniser.GetStatus(now)
                 
-                let executedJobs = 
-                    synchroniser.GetDueJobs(now)
-                    |> List.filter (fun (job, _) -> job.Status = JobStatus.StatusExecuted)
-
                 tickCount <- tickCount + 1
                 if tickCount % 10 = 0 then
                     logger.LogInformation("Post-subscription Executor status at {Time}: {Triggered} triggered jobs, {Executed} executed jobs out of {Total} total jobs", 
-                        now, triggeredJobs.Length, executedJobs.Length, metrics.TotalJobs)
+                        now, status.Triggered, status.Executed, metrics.TotalJobs)
                 else
                     logger.LogDebug("Post-subscription Executor status at {Time}: {Triggered} triggered jobs, {Executed} executed jobs out of {Total} total jobs", 
-                        now, triggeredJobs.Length, executedJobs.Length, metrics.TotalJobs)
+                        now, status.Triggered, status.Executed, metrics.TotalJobs)
 
                 try
                     do! Task.Delay(TimeSpan.FromSeconds(1), stoppingToken) 
@@ -262,9 +261,9 @@ type Worker(logger: ILogger<Worker>,
                     let eventAppeared = Func<PersistentSubscription, ResolvedEvent, Nullable<int>, CancellationToken, Task>(fun sub evt retryCount ct ->
                         task {
                             try
-                                match tryParseJobEvent evt with
+                                match resolve evt with
                                 | Some (EventTriggered triggered) ->
-                                    logger.LogInformation("Processing JobTriggered event for job {JobId}", triggered.JobId)
+                                    logger.LogInformation("Processing JobTriggered event for job {JobId}", triggered.Id)
                                     do! handleJobTriggeredEvent triggered sub evt
                                 | _ -> 
                                     do! sub.Ack([| evt |])

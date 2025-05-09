@@ -8,23 +8,72 @@ Each component can be run separately, with multiple instances of each, or using 
 dotnet run --project src/Ordo.Host/Ordo.Host.fsproj --all
 ```
 
-Schedule a job to run at a specific time:
+### Scheduling Jobs
 
+Ordo supports three types of job schedules:
+
+1. **Immediate** - Runs as soon as possible:
 ```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"scheduledTime": "2025-05-07T09:07:00Z", "payload": "test job"}' \
-  https://localhost:5001/api/jobs
+curl -k -X POST https://localhost:5001/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schedule": {
+      "Case": "Immediate"
+    },
+    "payload": "your-payload-here"
+  }'
 ```
 
-Response:
+2. **Precise** - Runs at a specific time:
+```bash
+curl -k -X POST https://localhost:5001/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schedule": {
+      "Case": "Precise",
+      "Fields": ["2025-05-08T15:05:00Z"]
+    },
+    "payload": "your-payload-here"
+  }'
+```
+
+3. **Configured** - Runs based on job type configuration:
+```bash
+curl -k -X POST https://localhost:5001/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schedule": {
+      "Case": "Configured",
+      "Fields": [{
+        "Type": {
+          "Case": "ExpireEori"
+        },
+        "From": "2025-05-08T15:05:00Z"
+      }]
+    },
+    "payload": "your-payload-here"
+  }'
+```
+
+Response for all schedule types:
 ```json
 {
-  "jobId": "819a1868-3824-4a6f-b408-316c807ee661"
+  "id": "819a1868-3824-4a6f-b408-316c807ee661"
 }
 ```
 
-The job will be executed at the specified time. You can monitor its progress through the logs:
+Note: The `-k` flag is required when using HTTPS with self-signed certificates in development.
 
+### Job Statuses
+
+Jobs progress through the following states:
+- `StatusScheduled`: Initial state when job is created
+- `StatusTriggered`: Job has been picked up for execution
+- `StatusExecuted`: Job completed successfully
+- `StatusCancelled`: Job was cancelled before execution
+- `StatusUnknown`: Job state could not be determined
+
+You can monitor job status through the logs:
 ```
 [10:06:54] Scheduling new job 819a1868-3824-4a6f-b408-316c807ee661 for 05/07/2025 09:07:00 +00:00
 [10:07:00] Triggering job 819a1868-3824-4a6f-b408-316c807ee661
@@ -32,12 +81,34 @@ The job will be executed at the specified time. You can monitor its progress thr
 [10:07:00] Successfully executed job 819a1868-3824-4a6f-b408-316c807ee661
 ```
 
+### Job Type Configuration
+
+Configured jobs use job type-specific settings. For example, the `ExpireEori` job type has:
+- Default delay: 10 seconds
+- Max retries: 3
+- Retry delay multiplier: 2.0
+
+You can view and update job type configurations:
+```bash
+# Get configuration for a job type
+curl -k -X GET https://localhost:5001/api/jobs/types/ExpireEori/config
+
+# Update configuration
+curl -k -X PUT https://localhost:5001/api/jobs/types/ExpireEori/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "defaultDelay": "00:00:10",
+    "maxRetries": 3,
+    "retryDelayMultiplier": 2.0
+  }'
+```
+
 ## Overview
 
 Ordo is a distributed job scheduling system built with F# and .NET 9. It uses event sourcing with KurrentDB to provide reliable, scalable job processing with strong consistency guarantees.
 
 Key features:
-- Schedule jobs to run at specific times
+- Schedule jobs to run immediately, at specific times, or based on configuration
 - Distributed execution across multiple nodes
 - Event-sourced job history
 - High availability and scalability

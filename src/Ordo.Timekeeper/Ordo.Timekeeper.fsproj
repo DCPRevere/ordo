@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="JobTypeConfigService.fs" />
     <Compile Include="Timekeeper.fs" />
     <Compile Include="TimekeeperService.fs" />
     <Compile Include="Program.fs" />
@@ -20,10 +21,18 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    <PackageReference Include="Serilog" Version="3.1.1" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="2.3.0" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="3.1.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Ordo.Core\Ordo.Core.fsproj" />
     <ProjectReference Include="..\Ordo.Synchroniser\Ordo.Synchroniser.fsproj" />
+    <ProjectReference Include="..\Ordo.Api\Ordo.Api.fsproj" />
   </ItemGroup>
 </Project>

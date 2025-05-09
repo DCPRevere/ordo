@@ -6,12 +6,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Json.fs" />
+    <Compile Include="Model.fs" />
     <Compile Include="Events.fs" />
-    <Compile Include="JobState.fs" />
+    <Compile Include="Job.fs" />
     <Compile Include="EventStore.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="FSharp.SystemTextJson" Version="1.3.13" />
     <PackageReference Include="EventStore.Client.Grpc.Streams" Version="23.3.8" />
   </ItemGroup>
 

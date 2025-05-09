@@ -6,8 +6,20 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open EventStore.Client
-open Ordo.Core.JobState
+open Ordo.Core.Job
+open Ordo.Core.Model
 open Ordo.Core.Events
+
+type JobStatusCounts = {
+    ImmediateScheduled: int
+    DueScheduled: int
+    FutureScheduled: int
+    Triggered: int
+    Executed: int
+    Cancelled: int
+    Failed: int
+    Unknown: int
+}
 
 type SynchroniserMetrics = {
     mutable TotalJobs: int64
@@ -26,7 +38,7 @@ type JobStateWithVersion = {
 type SynchroniserState =
     { Client: EventStoreClient
       Logger: ILogger
-      Jobs: ConcurrentDictionary<Guid, JobStateWithVersion>
+      Jobs: ConcurrentDictionary<string, JobStateWithVersion>
       mutable Subscription: IDisposable option
       Metrics: SynchroniserMetrics
       mutable IsStartupPhase: bool }
@@ -44,7 +56,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
     let state =
         { Client = client
           Logger = logger
-          Jobs = ConcurrentDictionary<Guid, JobStateWithVersion>() 
+          Jobs = ConcurrentDictionary<string, JobStateWithVersion>() 
           Subscription = None
           Metrics = metrics
           IsStartupPhase = true }
@@ -59,7 +71,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
             else
                 logger.LogDebug("Received job event from stream {StreamId}", resolvedEvent.OriginalStreamId)
             
-            match tryParseJobEvent resolvedEvent with
+            match resolve resolvedEvent with
             | Some jobEvent ->
                 let jobId = getJobId jobEvent
                 try
@@ -73,12 +85,14 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
                     let newJobState = state.Jobs.AddOrUpdate(
                         jobId, 
                         (fun _ -> 
-                            let initialJob = initialState jobId
-                            let updatedJob = applyEvent initialJob jobEvent
-                            if not state.IsStartupPhase then
-                                logger.LogInformation("New job {JobId} created with status {Status}", 
-                                    jobId, updatedJob.Status)
-                            { Job = updatedJob; Version = (uint64 (resolvedEvent.Event.EventNumber.ToInt64())) }),
+                            match jobEvent with
+                            | EventScheduled evt ->
+                                let initialJob = initialState evt
+                                if not state.IsStartupPhase then
+                                    logger.LogInformation("New job {JobId} created with status {Status}", 
+                                        jobId, initialJob.Status)
+                                { Job = initialJob; Version = (uint64 (resolvedEvent.Event.EventNumber.ToInt64())) }
+                            | _ -> failwith "First event for a job must be EventScheduled"),
                         (fun _ existing -> updateAction existing)
                     )
 
@@ -141,28 +155,87 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
             ()
         } :> Task
 
-    member _.GetJobState(jobId: Guid) : (Job * uint64) option =
+    member _.GetJobState(jobId: string) : (Job * uint64) option =
         match state.Jobs.TryGetValue(jobId) with
         | true, state -> Some (state.Job, state.Version)
         | false, _ -> None
 
-    member this.GetDueJobs(currentTime: DateTimeOffset) : (Job * uint64) list =
+    member this.GetDueJobs(currentTime: DateTimeOffset) : Job list =
+        state.Jobs.Values
+        |> Seq.filter (fun jobState -> 
+            match jobState.Job.Status with
+            | JobStatus.StatusScheduled ->
+                match jobState.Job.Schedule with
+                | Immediate -> true
+                | Precise scheduledTime -> scheduledTime <= currentTime
+                | Configured config -> config.From <= currentTime
+            | _ -> false
+        )
+        |> Seq.map (fun jobState -> jobState.Job)
+        |> List.ofSeq
+
+    member this.GetStatus(currentTime: DateTimeOffset) : ((Job * uint64) list * JobStatusCounts) =
         let dueJobs = 
             state.Jobs.Values
             |> Seq.filter (fun jobState -> 
                 match jobState.Job.Status with
                 | JobStatus.StatusScheduled ->
-                    match jobState.Job.ScheduledTime with
-                    | Some scheduledTime when scheduledTime <= currentTime ->
-                        true
-                    | _ -> false
+                    match jobState.Job.Schedule with
+                    | Immediate -> true
+                    | Precise scheduledTime -> scheduledTime <= currentTime
+                    | Configured config -> config.From <= currentTime
                 | _ -> false
             )
             |> Seq.map (fun jobState -> (jobState.Job, jobState.Version))
             |> List.ofSeq
+        let status = this.GetJobStatusCounts()
+        (dueJobs, status)
 
-        logger.LogDebug("Found {DueCount} due jobs out of {TotalCount} total jobs", dueJobs.Length, state.Jobs.Count)
-        dueJobs
+    member this.GetAllJobs() : (Job * uint64) list =
+        let jobs = 
+            state.Jobs.Values
+            |> Seq.map (fun jobState -> 
+                let job = jobState.Job
+                let version = jobState.Version
+                (job, version))
+            |> Seq.toList
+        logger.LogDebug("Retrieved {Count} jobs", jobs.Length)
+        jobs
+
+    member this.GetJobStatusCounts() : JobStatusCounts =
+        let currentTime = DateTimeOffset.UtcNow
+        state.Jobs.Values
+        |> Seq.fold (fun counts jobState ->
+            match jobState.Job.Status with
+            | JobStatus.StatusScheduled ->
+                match jobState.Job.Schedule with
+                | Immediate -> { counts with ImmediateScheduled = counts.ImmediateScheduled + 1 }
+                | Precise scheduledTime when scheduledTime <= currentTime -> 
+                    { counts with DueScheduled = counts.DueScheduled + 1 }
+                | Precise _ -> 
+                    { counts with FutureScheduled = counts.FutureScheduled + 1 }
+                | Configured config when config.From <= currentTime -> 
+                    { counts with DueScheduled = counts.DueScheduled + 1 }
+                | Configured _ -> 
+                    { counts with FutureScheduled = counts.FutureScheduled + 1 }
+            | JobStatus.StatusTriggered -> 
+                { counts with Triggered = counts.Triggered + 1 }
+            | JobStatus.StatusExecuted -> 
+                { counts with Executed = counts.Executed + 1 }
+            | JobStatus.StatusCancelled -> 
+                { counts with Cancelled = counts.Cancelled + 1 }
+            | _ -> 
+                { counts with Unknown = counts.Unknown + 1 }
+        ) {
+            ImmediateScheduled = 0
+            DueScheduled = 0
+            FutureScheduled = 0
+            Triggered = 0
+            Executed = 0
+            Cancelled = 0
+            Failed = 0
+            Unknown = 0
+        }
 
     member _.GetMetrics() : SynchroniserMetrics =
         metrics 

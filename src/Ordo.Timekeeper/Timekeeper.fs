@@ -1,41 +1,53 @@
 namespace Ordo.Timekeeper
 
+open EventStore.Client
+open Microsoft.Extensions.Logging
+open Ordo.Api.DTOs
+open Ordo.Core.Events
+open Ordo.Core.Job
+open Ordo.Core.Model
+open Ordo.Synchroniser
+open Serilog
 open System
+open System.Net.Http
 open System.Threading
 open System.Threading.Tasks
-open Microsoft.Extensions.Logging
-open EventStore.Client
-open System.Text.Json
-open Ordo.Core
-open Ordo.Core.JobState
-open Ordo.Core.Events
-open Ordo.Synchroniser
 
 type TimekeeperConfig = {
     EventStoreConnectionString: string
     CheckInterval: TimeSpan
+    ApiBaseUrl: string
 }
 
-type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config: TimekeeperConfig) =
+type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, config: TimekeeperConfig) =
     let mutable isRunning = false
     let mutable cancellationTokenSource = new CancellationTokenSource()
-    let synchroniser = ProjectionSynchroniser(esClient, logger)
+    let synchroniser = ProjectionSynchroniser(esClient, loggerFactory.CreateLogger<ProjectionSynchroniser>())
+    let httpClient = new HttpClient(BaseAddress = Uri(config.ApiBaseUrl))
+    let configService = JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
+    let logger = Log.ForContext<Timekeeper>()
 
     member this.Start() =
         if isRunning then
-            logger.LogWarning("Timekeeper is already running")
+            logger.Warning("Timekeeper is already running")
             Task.CompletedTask
         else
             isRunning <- true
             cancellationTokenSource <- new CancellationTokenSource()
             task {
                 do! synchroniser.Start(cancellationTokenSource.Token)
+                let now = DateTimeOffset.UtcNow
+                let _, status = synchroniser.GetStatus(now)
+                logger.Information("Timekeeper starting with job status: {ImmediateScheduled} immediate, {DueScheduled} due, {FutureScheduled} future, {Triggered} triggered, {Executed} executed, {Cancelled} cancelled, {Failed} failed, {Unknown} unknown", 
+                    status.ImmediateScheduled, status.DueScheduled, status.FutureScheduled, 
+                    status.Triggered, status.Executed, 
+                    status.Cancelled, status.Failed, status.Unknown)
                 do! this.RunAsync(cancellationTokenSource.Token)
             }
 
     member this.Stop() =
         if not isRunning then
-            logger.LogWarning("Timekeeper is not running")
+            logger.Warning("Timekeeper is not running")
             Task.CompletedTask
         else
             isRunning <- false
@@ -43,6 +55,7 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
                 do! synchroniser.Stop(cancellationTokenSource.Token)
                 cancellationTokenSource.Cancel()
                 cancellationTokenSource.Dispose()
+                httpClient.Dispose()
             }
 
     member private this.RunAsync(ct: CancellationToken) =
@@ -54,59 +67,82 @@ type Timekeeper(esClient: EventStoreClient, logger: ILogger<Timekeeper>, config:
                         do! Task.Delay(config.CheckInterval, ct)
                     with
                     | :? OperationCanceledException ->
-                        logger.LogInformation("Timekeeper operation canceled")
+                        logger.Information("Timekeeper operation canceled")
                         return ()
                     | ex ->
-                        logger.LogError(ex, "Error in Timekeeper main loop")
+                        logger.Error(ex, "Error in Timekeeper main loop")
                         do! Task.Delay(TimeSpan.FromSeconds(1), ct)
             with
             | :? OperationCanceledException ->
-                logger.LogInformation("Timekeeper stopped")
+                logger.Information("Timekeeper stopped")
             | ex ->
-                logger.LogError(ex, "Error in Timekeeper main loop")
+                logger.Error(ex, "Error in Timekeeper main loop")
         }
 
     member private this.CheckAndTriggerJobsAsync() =
         task {
             try
                 let now = DateTimeOffset.UtcNow
-                let dueJobs = this.GetDueJobs(now)
+                let dueJobs, status = synchroniser.GetStatus(now)
+                logger.Information("Job status: {ImmediateScheduled} immediate, {DueScheduled} due, {FutureScheduled} future, {Triggered} triggered, {Executed} executed, {Cancelled} cancelled, {Failed} failed, {Unknown} unknown", 
+                    status.ImmediateScheduled, status.DueScheduled, status.FutureScheduled, 
+                    status.Triggered, status.Executed, 
+                    status.Cancelled, status.Failed, status.Unknown)
                 for (job, version) in dueJobs do
                     do! this.TriggerJobAsync(job, version)
             with ex ->
-                logger.LogError(ex, "Error checking and triggering jobs")
+                logger.Error(ex, "Error checking and triggering jobs")
+        }
+
+    member private this.GetScheduledTime(job: Job) : Task<DateTimeOffset> =
+        task {
+            match job.Schedule with
+            | Schedule.Immediate -> return DateTimeOffset.UtcNow
+            | Schedule.Precise time -> return time
+            | Schedule.Configured config ->
+                let! jobConfig = configService.GetConfigForJobType(config.Type.ToString())
+                match jobConfig with
+                | Some jobConfig ->
+                    let delay = TimeSpan.Parse(jobConfig.DefaultDelay)
+                    return config.From.Add(delay)
+                | None ->
+                    logger.Warning("No configuration found for job type {JobType}, using default delay", config.Type)
+                    return config.From.Add(TimeSpan.FromHours(1.0))
         }
 
     member private this.TriggerJobAsync(job: Job, version: uint64) =
         task {
             try
                 let now = DateTimeOffset.UtcNow
-                logger.LogInformation("Triggering job {JobId} (scheduled for {ScheduledTime})", job.Id, job.ScheduledTime)
+                let! scheduledTime = this.GetScheduledTime(job)
+                
+                logger.Information("Triggering job {JobId} (scheduled for {ScheduledTime})", job.Id, scheduledTime)
                 let event = {
-                    JobId = job.Id
+                    Metadata = { CorrelationId = job.Id; CausationId = None; UserId = None; Timestamp = None }
+                    Id = job.Id
                     TriggerTime = now
                     Timestamp = now
                 }
-                let eventJson = JsonSerializer.Serialize(event)
+                let jsonData = System.Text.Encoding.UTF8.GetBytes(Ordo.Core.Json.serialise event)
                 let eventData = EventData(
                     Uuid.NewUuid(),
-                    "JobTriggered",
-                    System.Text.Encoding.UTF8.GetBytes(eventJson)
+                    JobTriggeredV2.Schema.toString,
+                    jsonData
                 )
                 let! result = esClient.AppendToStreamAsync(
                     $"ordo-job-{job.Id}",
                     StreamRevision version,
                     [| eventData |]
                 )
-                logger.LogInformation("Successfully triggered job {JobId}", job.Id)
+                logger.Information("Successfully triggered job {JobId}", job.Id)
             with
             | :? WrongExpectedVersionException ->
-                logger.LogInformation("Job {JobId} already triggered by another instance", job.Id)
+                logger.Information("Job {JobId} already triggered by another instance", job.Id)
             | ex ->
-                logger.LogError(ex, "Error triggering job {JobId}", job.Id)
+                logger.Error(ex, "Error triggering job {JobId}", job.Id)
         }
 
     member this.GetDueJobs(currentTime: DateTimeOffset) : (Job * uint64) list =
-        let dueJobs = synchroniser.GetDueJobs(currentTime)
-        logger.LogInformation("Found {DueCount} due jobs out of {TotalCount} total jobs", dueJobs.Length, synchroniser.GetMetrics().TotalJobs)
+        let dueJobs, status = synchroniser.GetStatus(currentTime)
+        logger.Information("Found {DueCount} due jobs out of {TotalCount} total jobs", dueJobs.Length, synchroniser.GetMetrics().TotalJobs)
         dueJobs 

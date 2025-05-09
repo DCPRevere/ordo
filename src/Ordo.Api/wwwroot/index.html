@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ordo Job Status</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .status-badge {
+            font-size: 0.9em;
+            padding: 0.35em 0.65em;
+        }
+        .metrics-card {
+            margin-bottom: 2rem;
+        }
+        .table th {
+            cursor: pointer;
+        }
+        .table th:hover {
+            background-color: #f8f9fa;
+        }
+        .expandable-row {
+            cursor: pointer;
+        }
+        .expandable-row:hover {
+            background-color: #f8f9fa;
+        }
+        .details-row {
+            background-color: #f8f9fa;
+        }
+        .sort-icon {
+            margin-left: 0.5rem;
+        }
+        .sort-icon.active {
+            color: #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="mb-4">Ordo Job Status</h1>
+        
+        <!-- Reschedule Modal -->
+        <div class="modal fade" id="rescheduleModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Reschedule Job</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="rescheduleForm">
+                            <input type="hidden" id="rescheduleJobId">
+                            <div class="mb-3">
+                                <label class="form-label">Schedule Type</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="scheduleType" id="scheduleTypeImmediate" value="immediate" checked>
+                                    <label class="form-check-label" for="scheduleTypeImmediate">Immediate</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="scheduleType" id="scheduleTypePrecise" value="precise">
+                                    <label class="form-check-label" for="scheduleTypePrecise">Precise Time</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="scheduleType" id="scheduleTypeConfigured" value="configured">
+                                    <label class="form-check-label" for="scheduleTypeConfigured">Configured</label>
+                                </div>
+                            </div>
+                            <div class="mb-3" id="preciseTimeGroup" style="display: none;">
+                                <label for="newScheduledTime" class="form-label">Scheduled Time</label>
+                                <input type="datetime-local" class="form-control" id="newScheduledTime">
+                            </div>
+                            <div class="mb-3" id="configuredGroup" style="display: none;">
+                                <label for="jobType" class="form-label">Job Type</label>
+                                <select class="form-select" id="jobType">
+                                    <option value="">Select a job type...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="rescheduleReason" class="form-label">Reason</label>
+                                <input type="text" class="form-control" id="rescheduleReason" required>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="submitReschedule()">Reschedule</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card metrics-card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">System Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="metrics">
+                            <div class="col">
+                                <h6>Total Jobs</h6>
+                                <p id="totalJobs">-</p>
+                            </div>
+                            <div class="col">
+                                <h6>Scheduled Jobs</h6>
+                                <p id="scheduledJobs">-</p>
+                            </div>
+                            <div class="col">
+                                <h6>Triggered Jobs</h6>
+                                <p id="triggeredJobs">-</p>
+                            </div>
+                            <div class="col">
+                                <h6>Executed Jobs</h6>
+                                <p id="executedJobs">-</p>
+                            </div>
+                            <div class="col">
+                                <h6>Cancelled Jobs</h6>
+                                <p id="cancelledJobs">-</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">Jobs</h5>
+                        <div class="d-flex align-items-center">
+                            <div class="form-check me-3">
+                                <input class="form-check-input" type="checkbox" id="showExecutedJobs" checked>
+                                <label class="form-check-label" for="showExecutedJobs">Show Executed</label>
+                            </div>
+                            <div class="form-check me-3">
+                                <input class="form-check-input" type="checkbox" id="showCancelledJobs" checked>
+                                <label class="form-check-label" for="showCancelledJobs">Show Cancelled</label>
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="refreshJobs()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th onclick="sortTable('jobType')">Job Type <i class="bi bi-arrow-down-up sort-icon" id="sort-jobType"></i></th>
+                                        <th onclick="sortTable('status')">Status <i class="bi bi-arrow-down-up sort-icon" id="sort-status"></i></th>
+                                        <th onclick="sortTable('scheduledTime')">Scheduled <i class="bi bi-arrow-down-up sort-icon" id="sort-scheduledTime"></i></th>
+                                        <th onclick="sortTable('triggerTime')">Triggered <i class="bi bi-arrow-down-up sort-icon" id="sort-triggerTime"></i></th>
+                                        <th onclick="sortTable('executionTime')">Executed <i class="bi bi-arrow-down-up sort-icon" id="sort-executionTime"></i></th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jobsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentSort = { column: 'scheduledTime', direction: 'desc' };
+        let jobs = [];
+        let rescheduleModal;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            rescheduleModal = new bootstrap.Modal(document.getElementById('rescheduleModal'));
+            
+            // Add change event listeners for checkboxes
+            document.getElementById('showExecutedJobs').addEventListener('change', renderJobs);
+            document.getElementById('showCancelledJobs').addEventListener('change', renderJobs);
+            
+            // Add change event listeners for schedule type radio buttons
+            document.querySelectorAll('input[name="scheduleType"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    const preciseTimeGroup = document.getElementById('preciseTimeGroup');
+                    const configuredGroup = document.getElementById('configuredGroup');
+                    const newScheduledTime = document.getElementById('newScheduledTime');
+                    
+                    switch(this.value) {
+                        case 'immediate':
+                            preciseTimeGroup.style.display = 'none';
+                            configuredGroup.style.display = 'none';
+                            newScheduledTime.required = false;
+                            break;
+                        case 'precise':
+                            preciseTimeGroup.style.display = 'block';
+                            configuredGroup.style.display = 'none';
+                            newScheduledTime.required = true;
+                            break;
+                        case 'configured':
+                            preciseTimeGroup.style.display = 'none';
+                            configuredGroup.style.display = 'block';
+                            newScheduledTime.required = false;
+                            break;
+                    }
+                });
+            });
+            
+            // Load job types when modal is shown
+            document.getElementById('rescheduleModal').addEventListener('show.bs.modal', loadJobTypes);
+        });
+
+        async function loadJobTypes() {
+            try {
+                const response = await fetch('/api/jobs/types/config');
+                if (response.ok) {
+                    const configs = await response.json();
+                    const select = document.getElementById('jobType');
+                    select.innerHTML = '<option value="">Select a job type...</option>';
+                    Object.keys(configs).forEach(jobType => {
+                        const option = document.createElement('option');
+                        option.value = jobType;
+                        option.textContent = jobType;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading job types:', error);
+            }
+        }
+
+        function formatDate(dateStr) {
+            return dateStr ? new Date(dateStr).toLocaleString() : '-';
+        }
+
+        function getStatusBadgeClass(status) {
+            switch (status) {
+                case 'StatusScheduled': return 'bg-primary';
+                case 'StatusTriggered': return 'bg-warning';
+                case 'StatusExecuting': return 'bg-info';
+                case 'StatusExecuted': return 'bg-success';
+                case 'StatusCancelled': return 'bg-secondary';
+                case 'StatusFailed': return 'bg-danger';
+                default: return 'bg-secondary';
+            }
+        }
+
+        function updateMetrics(status) {
+            console.log('Updating metrics with:', status); // Debug log
+            
+            // Calculate total scheduled jobs
+            const scheduledJobs = (status.immediateScheduled || 0) + 
+                                (status.dueScheduled || 0) + 
+                                (status.futureScheduled || 0);
+            
+            // Update the UI with the metrics
+            document.getElementById('totalJobs').textContent = status.totalJobs || 0;
+            document.getElementById('scheduledJobs').textContent = scheduledJobs;
+            document.getElementById('triggeredJobs').textContent = status.triggered || 0;
+            document.getElementById('executedJobs').textContent = status.executed || 0;
+            document.getElementById('cancelledJobs').textContent = status.cancelled || 0;
+        }
+
+        function updateSortIcons() {
+            document.querySelectorAll('.sort-icon').forEach(icon => {
+                icon.classList.remove('active');
+                icon.classList.remove('bi-arrow-down');
+                icon.classList.remove('bi-arrow-up');
+            });
+            
+            const activeIcon = document.getElementById(`sort-${currentSort.column}`);
+            activeIcon.classList.add('active');
+            activeIcon.classList.add(currentSort.direction === 'asc' ? 'bi-arrow-up' : 'bi-arrow-down');
+        }
+
+        function sortTable(column) {
+            if (currentSort.column === column) {
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.direction = 'asc';
+            }
+            
+            updateSortIcons();
+            renderJobs();
+        }
+
+        function renderJobs() {
+            const tbody = document.getElementById('jobsTableBody');
+            tbody.innerHTML = '';
+            
+            const showExecuted = document.getElementById('showExecutedJobs').checked;
+            const showCancelled = document.getElementById('showCancelledJobs').checked;
+            
+            const sortedJobs = [...jobs].sort((a, b) => {
+                let aVal = a[currentSort.column];
+                let bVal = b[currentSort.column];
+                
+                if (currentSort.column === 'status') {
+                    aVal = aVal.replace('Status', '');
+                    bVal = bVal.replace('Status', '');
+                }
+                
+                if (aVal === null) aVal = '';
+                if (bVal === null) bVal = '';
+                
+                const result = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+                return currentSort.direction === 'asc' ? result : -result;
+            }).filter(job => {
+                if (job.status === 'StatusExecuted' && !showExecuted) return false;
+                if (job.status === 'StatusCancelled' && !showCancelled) return false;
+                return true;
+            });
+            
+            sortedJobs.forEach(job => {
+                const isExpanded = job.isExpanded;
+                
+                // Main row
+                const mainRow = document.createElement('tr');
+                mainRow.className = 'expandable-row';
+                mainRow.onclick = () => toggleJobDetails(job.jobId);
+                mainRow.innerHTML = `
+                    <td>${job.jobType}</td>
+                    <td><span class="badge ${getStatusBadgeClass(job.status)} status-badge">${job.status.replace('Status', '')}</span></td>
+                    <td>${formatDate(job.scheduledTime)}</td>
+                    <td>${formatDate(job.triggerTime)}</td>
+                    <td>${formatDate(job.executionTime)}</td>
+                    <td>
+                        ${job.status === 'StatusScheduled' || job.status === 'StatusTriggered' ? 
+                            `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelJob('${job.jobId}')">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </button>` : ''}
+                        ${job.status === 'StatusScheduled' ? 
+                            `<button class="btn btn-warning btn-sm ms-1" onclick="event.stopPropagation(); showRescheduleModal('${job.jobId}')">
+                                <i class="bi bi-clock"></i> Reschedule
+                            </button>` : ''}
+                    </td>
+                `;
+                tbody.appendChild(mainRow);
+                
+                // Details row
+                if (isExpanded) {
+                    const detailsRow = document.createElement('tr');
+                    detailsRow.className = 'details-row';
+                    detailsRow.innerHTML = `
+                        <td colspan="6">
+                            <div class="p-3">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <p><strong>Job ID:</strong> ${job.jobId}</p>
+                                        <p><strong>Last Updated:</strong> ${formatDate(job.lastUpdated)}</p>
+                                    </div>
+                                    <div class="col-md-6">
+                                        ${job.payload ? `<p><strong>Payload:</strong> ${job.payload}</p>` : ''}
+                                        ${job.resultData ? `<p><strong>Result:</strong> ${job.resultData}</p>` : ''}
+                                        ${job.failureMessage ? `<p class="text-danger"><strong>Error:</strong> ${job.failureMessage}</p>` : ''}
+                                        ${job.cancellationReason ? `<p class="text-warning"><strong>Cancelled:</strong> ${job.cancellationReason}</p>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    `;
+                    tbody.appendChild(detailsRow);
+                }
+            });
+        }
+
+        function toggleJobDetails(jobId) {
+            const job = jobs.find(j => j.jobId === jobId);
+            if (job) {
+                job.isExpanded = !job.isExpanded;
+                renderJobs();
+            }
+        }
+
+        async function cancelJob(jobId) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    refreshJobs();
+                } else {
+                    console.error('Failed to cancel job:', await response.text());
+                }
+            } catch (error) {
+                console.error('Error cancelling job:', error);
+            }
+        }
+
+        function showRescheduleModal(jobId) {
+            document.getElementById('rescheduleJobId').value = jobId;
+            document.getElementById('newScheduledTime').value = '';
+            document.getElementById('rescheduleReason').value = '';
+            document.getElementById('jobType').value = '';
+            document.getElementById('scheduleTypeImmediate').checked = true;
+            document.getElementById('preciseTimeGroup').style.display = 'none';
+            document.getElementById('configuredGroup').style.display = 'none';
+            rescheduleModal.show();
+        }
+
+        async function submitReschedule() {
+            const jobId = document.getElementById('rescheduleJobId').value;
+            const scheduleType = document.querySelector('input[name="scheduleType"]:checked').value;
+            const newTime = document.getElementById('newScheduledTime').value;
+            const jobType = document.getElementById('jobType').value;
+            const reason = document.getElementById('rescheduleReason').value;
+
+            if (!reason) {
+                alert('Please provide a reason');
+                return;
+            }
+
+            if (scheduleType === 'precise' && !newTime) {
+                alert('Please select a scheduled time');
+                return;
+            }
+
+            if (scheduleType === 'configured' && !jobType) {
+                alert('Please select a job type');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/jobs/${jobId}/reschedule`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        scheduleType: scheduleType,
+                        scheduledTime: newTime ? new Date(newTime).toISOString() : null,
+                        jobType: jobType || null,
+                        reason: reason
+                    })
+                });
+                
+                if (response.ok) {
+                    rescheduleModal.hide();
+                    refreshJobs();
+                } else {
+                    const errorText = await response.text();
+                    console.error('Failed to reschedule job:', errorText);
+                    alert('Failed to reschedule job: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Error rescheduling job:', error);
+                alert('Error rescheduling job: ' + error.message);
+            }
+        }
+
+        async function refreshJobs() {
+            try {
+                const response = await fetch('/api/jobs/all');
+                const data = await response.json();
+                
+                console.log('Received status:', data.status); // Debug log
+                
+                if (data.status) {
+                    updateMetrics(data.status);
+                } else {
+                    console.error('No status data received');
+                }
+                
+                // Preserve expanded state
+                const expandedJobs = jobs.filter(j => j.isExpanded).map(j => j.jobId);
+                jobs = data.jobs;
+                jobs.forEach(job => {
+                    job.isExpanded = expandedJobs.includes(job.jobId);
+                });
+                
+                renderJobs();
+            } catch (error) {
+                console.error('Error fetching jobs:', error);
+            }
+        }
+
+        // Initial load
+        refreshJobs();
+        
+        // Refresh every 10 seconds
+        setInterval(refreshJobs, 10000);
+    </script>
+</body>
+</html> 

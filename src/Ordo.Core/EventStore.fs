@@ -13,33 +13,33 @@ let private settings = EventStoreClientSettings.Create(connectionString)
 
 let client = new EventStoreClient(settings)
 
-let private jobStreamName (jobId: Guid) : string =
-    sprintf "ordo-job-%s" (jobId.ToString("D"))
+let private jobStreamName (jobId: string) : string =
+    sprintf "ordo-job-%s" jobId
 
 let private appendEvent<'T> (streamName: string) (eventType: string) (eventData: 'T) (expectedState: StreamState) : Task =
     task {
-        let jsonData = JsonSerializer.SerializeToUtf8Bytes(eventData)
+        let jsonData = System.Text.Encoding.UTF8.GetBytes(Ordo.Core.Json.serialise eventData)
         let eventToWrite = EventData( Uuid.NewUuid(), eventType, jsonData)
         let! _writeResult = client.AppendToStreamAsync( streamName, expectedState, [| eventToWrite |])
         ()
     } :> Task
 
-let scheduleJob (event: JobScheduled) : Task =
-    let stream = jobStreamName event.JobId
-    appendEvent stream "JobScheduled" event StreamState.NoStream
+let scheduleJob (event: JobScheduledV2) : Task =
+    let stream = jobStreamName event.Id
+    appendEvent stream JobScheduledV2.Schema.toString event StreamState.NoStream
 
-let triggerJob (event: JobTriggered) : Task =
-    let stream = jobStreamName event.JobId
-    appendEvent stream "JobTriggered" event StreamState.Any
+let triggerJob (event: JobTriggeredV2) : Task =
+    let stream = jobStreamName event.Id
+    appendEvent stream JobTriggeredV2.Schema.toString event StreamState.Any
 
-let executeJob (event: JobExecuted) : Task =
-    let stream = jobStreamName event.JobId
-    appendEvent stream "JobExecuted" event StreamState.Any
+let executeJob (event: JobExecutedV2) : Task =
+    let stream = jobStreamName event.Id
+    appendEvent stream JobExecutedV2.Schema.toString event StreamState.Any
 
-let cancelJob (event: JobCancelled) : Task =
-    let stream = jobStreamName event.JobId
-    appendEvent stream "JobCancelled" event StreamState.Any
+let cancelJob (event: JobCancelledV2) : Task =
+    let stream = jobStreamName event.Id
+    appendEvent stream JobCancelledV2.Schema.toString event StreamState.Any
 
-let failJob (event: JobFailed) : Task =
-    let stream = jobStreamName event.JobId
-    appendEvent stream "JobFailed" event StreamState.Any
+let rescheduleJob (event: JobRescheduledV2) : Task =
+    let stream = jobStreamName event.Id
+    appendEvent stream JobRescheduledV2.Schema.toString event StreamState.Any
