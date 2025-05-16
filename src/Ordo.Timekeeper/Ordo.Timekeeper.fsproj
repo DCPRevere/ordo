@@ -10,7 +10,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="JobTypeConfigService.fs" />
     <Compile Include="Timekeeper.fs" />
     <Compile Include="TimekeeperService.fs" />
     <Compile Include="Program.fs" />

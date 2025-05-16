@@ -1,18 +1,18 @@
 namespace Ordo.Api.Controllers
 
+open EventStore.Client
+open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.Mvc
+open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Logging
+open Ordo.Core.DTOs
+open Ordo.Core.EventStore
+open Ordo.Core.Events
+open Ordo.Core.Rebuilding
+open Ordo.Core.Model
+open Ordo.Synchroniser
 open System
 open System.Threading.Tasks
-open Microsoft.AspNetCore.Mvc
-open Microsoft.AspNetCore.Http
-open Microsoft.Extensions.Logging
-open Microsoft.Extensions.Configuration
-open Ordo.Core.Events
-open Ordo.Core.EventStore
-open Ordo.Api.DTOs
-open Ordo.Synchroniser
-open Ordo.Core.Job
-open Ordo.Core.Model
-open EventStore.Client
 
 type JobStatusDto = {
     JobId: Guid

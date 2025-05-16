@@ -21,3 +21,17 @@ type Schedule =
     | Immediate
     | Precise of DateTimeOffset
     | Configured of ConfiguredSchedule
+
+type Job =
+    { Id: string
+      Status: JobStatus
+      Schedule: Schedule
+      ScheduledTime: DateTimeOffset option
+      Payload: string option
+      LastUpdated: DateTimeOffset
+      TriggerTime: DateTimeOffset option
+      ExecutionTime: DateTimeOffset option
+      ResultData: string option
+      FailureMessage: string option
+      CancellationReason: string option
+    }

@@ -2,9 +2,9 @@ namespace Ordo.Timekeeper
 
 open EventStore.Client
 open Microsoft.Extensions.Logging
-open Ordo.Api.DTOs
+open Ordo.Core.DTOs
 open Ordo.Core.Events
-open Ordo.Core.Job
+open Ordo.Core.Rebuilding
 open Ordo.Core.Model
 open Ordo.Synchroniser
 open Serilog

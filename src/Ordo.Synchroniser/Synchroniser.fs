@@ -6,9 +6,10 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open EventStore.Client
-open Ordo.Core.Job
+open Ordo.Core.Rebuilding
 open Ordo.Core.Model
 open Ordo.Core.Events
+open Ordo.Core
 
 type JobStatusCounts = {
     ImmediateScheduled: int
@@ -87,7 +88,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
                         (fun _ -> 
                             match jobEvent with
                             | EventScheduled evt ->
-                                let initialJob = initialState evt
+                                let initialJob = initialState evt jtcs
                                 if not state.IsStartupPhase then
                                     logger.LogInformation("New job {JobId} created with status {Status}", 
                                         jobId, initialJob.Status)

@@ -1,20 +1,21 @@
-namespace Ordo.Timekeeper
+namespace Ordo.Core
 
 open System
 open System.Net.Http
 open System.Collections.Concurrent
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
-open Ordo.Api.DTOs
+open Ordo.Core.DTOs
 open Ordo.Core.Json
+open Ordo.Core.Model
 open Serilog
 open Serilog.Events
 
 type JobTypeConfigService(httpClient: HttpClient, logger: ILogger<JobTypeConfigService>) =
-    let mutable configCache = Map.empty<string, JobTypeDelayConfig>
+    let mutable configCache = Map.empty<ConfiguredScheduleType, JobTypeDelayConfig>
     let log = Log.ForContext<JobTypeConfigService>()
     
-    member this.GetConfigForJobType(jobType: string) : Task<JobTypeDelayConfig option> =
+    member this.GetConfig(jobType: ConfiguredScheduleType) : Task<JobTypeDelayConfig option> =
         task {
             match Map.tryFind jobType configCache with
             | Some config ->
@@ -44,7 +45,7 @@ type JobTypeConfigService(httpClient: HttpClient, logger: ILogger<JobTypeConfigS
             let! response = httpClient.GetAsync("api/jobs/types/config")
             if response.IsSuccessStatusCode then
                 let! content = response.Content.ReadAsStringAsync()
-                match tryDeserialise<Map<string, JobTypeDelayConfig>> content with
+                match tryDeserialise<Map<ConfiguredScheduleType, JobTypeDelayConfig>> content with
                 | None ->
                     log.Warning("Failed to deserialize configurations from API")
                     configCache <- Map.empty

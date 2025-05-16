@@ -1,34 +1,37 @@
-module Ordo.Core.Job
+module Ordo.Core.Rebuilding
 
 open System
 open Ordo.Core.Events
 open EventStore.Client
 open Ordo.Core.Model
 open System.Text.Json
+open Ordo.Core
+open System.Threading.Tasks
 
-type Job =
-    { Id: string
-      Status: JobStatus
-      Schedule: Schedule
-      Payload: string option
-      LastUpdated: DateTimeOffset
-      TriggerTime: DateTimeOffset option
-      ExecutionTime: DateTimeOffset option
-      ResultData: string option
-      FailureMessage: string option
-      CancellationReason: string option
+let calculateScheduledTime (sch: Schedule) (ts: DateTimeOffset option) (jtcs: JobTypeConfigService) : Task<DateTimeOffset> =
+    task {
+        match sch with
+        | Immediate -> return (ts |> Option.defaultValue DateTimeOffset.MinValue)
+        | Precise time -> return time
+        | Configured configuredSch ->
+            let! configOpt = jtcs.GetConfig(configuredSch.Type)
+            match configOpt with
+            | Some jobTypeConfig ->
+                match TimeSpan.TryParse(jobTypeConfig.DefaultDelay) with
+                | true, delayTimeSpan ->
+                    return configuredSch.From.Add(delayTimeSpan)
+                | false, _ ->
+                    return (ts |> Option.defaultValue DateTimeOffset.MinValue)
+            | None ->
+                return (ts |> Option.defaultValue DateTimeOffset.MinValue)
     }
 
-let initialState (evt: JobScheduledV2) : Job =
-    let schedule = 
-        match evt.Schedule with
-        | Schedule.Immediate -> Immediate
-        | Schedule.Precise time -> Precise time
-        | Schedule.Configured config -> Configured { Type = config.Type; From = config.From }
-        | _ -> failwith $"Unknown job type: {evt.Schedule}"
+
+let initialState (evt: JobScheduledV2) (jtcs: JobTypeConfigService) : Job =
     { Id = evt.Id
       Status = JobStatus.StatusScheduled
-      Schedule = schedule
+      Schedule = evt.Schedule
+      ScheduledTime = None
       Payload = Some evt.Payload
       LastUpdated = evt.Metadata.Timestamp |> Option.defaultValue DateTimeOffset.MinValue
       TriggerTime = None
@@ -92,11 +95,11 @@ let applyEvent (currentState: Job) (event: JobEvent) : Job =
         else
             currentState
 
-let reconstructState (jobId: Guid) (resolvedEvents: seq<ResolvedEvent>) : Job =
+let reconstructState (jobId: Guid) (resolvedEvents: seq<ResolvedEvent>) (jtcs: JobTypeConfigService) : Job =
     let events = resolvedEvents |> Seq.choose resolve |> Seq.toList
     match events with
     | [] -> failwith "No events found for job"
     | EventScheduled evt :: rest ->
-        let startState = initialState evt
+        let startState = initialState evt jtcs
         rest |> Seq.fold applyEvent startState
     | _ -> failwith "First event must be JobScheduled"

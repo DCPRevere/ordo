@@ -1,4 +1,4 @@
-namespace Ordo.Api.DTOs
+namespace Ordo.Core.DTOs
 
 open System
 
