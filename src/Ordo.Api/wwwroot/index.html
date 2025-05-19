@@ -147,7 +147,7 @@
                             <table class="table table-hover">
                                 <thead>
                                     <tr>
-                                        <th onclick="sortTable('jobType')">Job Type <i class="bi bi-arrow-down-up sort-icon" id="sort-jobType"></i></th>
+                                        <th onclick="sortTable('scheduleType')">Schedule Type <i class="bi bi-arrow-down-up sort-icon" id="sort-scheduleType"></i></th>
                                         <th onclick="sortTable('status')">Status <i class="bi bi-arrow-down-up sort-icon" id="sort-status"></i></th>
                                         <th onclick="sortTable('scheduledTime')">Scheduled <i class="bi bi-arrow-down-up sort-icon" id="sort-scheduledTime"></i></th>
                                         <th onclick="sortTable('triggerTime')">Triggered <i class="bi bi-arrow-down-up sort-icon" id="sort-triggerTime"></i></th>
@@ -232,14 +232,42 @@
         }
 
         function getStatusBadgeClass(status) {
+            if (!status || !status.Case) return 'bg-secondary';
             switch (status.Case) {
                 case 'StatusScheduled': return 'bg-primary';
                 case 'StatusTriggered': return 'bg-warning';
-                case 'StatusExecuting': return 'bg-info';
                 case 'StatusExecuted': return 'bg-success';
                 case 'StatusCancelled': return 'bg-secondary';
-                case 'StatusFailed': return 'bg-danger';
+                case 'StatusUnknown': return 'bg-secondary';
                 default: return 'bg-secondary';
+            }
+        }
+
+        function getStatusText(status) {
+            if (!status || !status.Case) return 'Unknown';
+            return status.Case.replace('Status', '');
+        }
+
+        function getScheduleType(schedule) {
+            if (!schedule || !schedule.Case) return "-";
+            switch (schedule.Case) {
+                case 'Immediate': return 'Imm';
+                case 'Precise': return 'Pre';
+                case 'Configured': return 'Con';
+                default: return '-';
+            }
+        }
+
+        function getScheduleDisplay(schedule) {
+            if (!schedule || !schedule.Case) return "-";
+            switch (schedule.Case) {
+                case 'Immediate': return "Immediate";
+                case 'Precise': return formatDate(schedule.Fields[0]);
+                case 'Configured': {
+                    const config = schedule.Fields[0];
+                    return `${config.Type} (from ${formatDate(config.From)})`;
+                }
+                default: return "-";
             }
         }
 
@@ -302,11 +330,9 @@
                 if (currentSort.column === 'jobType') {
                     aVal = a.schedule.Case + (a.schedule.Case === 'Configured' ? ` (${a.schedule.Fields[0].type.Case})` : '');
                     bVal = b.schedule.Case + (b.schedule.Case === 'Configured' ? ` (${b.schedule.Fields[0].type.Case})` : '');
+
                 }
-                
-                if (aVal === null) aVal = '';
-                if (bVal === null) bVal = '';
-                
+
                 const result = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
                 return currentSort.direction === 'asc' ? result : -result;
             }).filter(job => {
@@ -336,7 +362,8 @@
                         ${job.status.Case === 'StatusScheduled' ? 
                             `<button class="btn btn-warning btn-sm ms-1" onclick="event.stopPropagation(); showRescheduleModal('${job.id}')">
                                 <i class="bi bi-clock"></i> Reschedule
-                            </button>` : ''}
+                            </button>` 
+                            : ''}
                     </td>
                 `;
                 tbody.appendChild(mainRow);

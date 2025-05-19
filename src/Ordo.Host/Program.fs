@@ -1,6 +1,7 @@
 ﻿open System
 open System.IO
 open System.Threading.Tasks
+open System.Net.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -47,10 +48,19 @@ module Host =
         services.AddSingleton(client) |> ignore
         services.AddSingleton(persistentSubClient) |> ignore
         
+        services.AddHttpClient() |> ignore
+        services.AddSingleton<Ordo.Core.JobTypeConfigService>(fun sp ->
+            let httpClientFactory = sp.GetRequiredService<IHttpClientFactory>()
+            let httpClient = httpClientFactory.CreateClient() :> HttpClient
+            let logger = sp.GetRequiredService<ILogger<Ordo.Core.JobTypeConfigService>>()
+            new Ordo.Core.JobTypeConfigService(httpClient, logger)
+        ) |> ignore
+        
         services.AddSingleton<ProjectionSynchroniser>(fun sp ->
             let client = sp.GetRequiredService<EventStoreClient>()
             let logger = sp.GetRequiredService<ILogger<ProjectionSynchroniser>>()
-            ProjectionSynchroniser(client, logger)
+            let configService = sp.GetRequiredService<Ordo.Core.JobTypeConfigService>()
+            new ProjectionSynchroniser(client, logger, configService)
         ) |> ignore
         
         services.AddHostedService<SynchroniserHostedService>() |> ignore

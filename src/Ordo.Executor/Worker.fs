@@ -218,7 +218,7 @@ type Worker(logger: ILogger<Worker>,
             while not stoppingToken.IsCancellationRequested do
                 let now = DateTimeOffset.UtcNow
                 let metrics = synchroniser.GetMetrics() 
-                let _, status = synchroniser.GetStatus(now)
+                let! (_, status) = synchroniser.GetStatus(now)
                 
                 tickCount <- tickCount + 1
                 if tickCount % 10 = 0 then
