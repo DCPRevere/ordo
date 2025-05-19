@@ -24,7 +24,6 @@ type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, confi
     let mutable cancellationTokenSource = new CancellationTokenSource()
     let synchroniser = ProjectionSynchroniser(esClient, loggerFactory.CreateLogger<ProjectionSynchroniser>())
     let httpClient = new HttpClient(BaseAddress = Uri(config.ApiBaseUrl))
-    let configService = JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
     let logger = Log.ForContext<Timekeeper>()
 
     member this.Start() =
@@ -100,14 +99,7 @@ type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, confi
             | Schedule.Immediate -> return DateTimeOffset.UtcNow
             | Schedule.Precise time -> return time
             | Schedule.Configured config ->
-                let! jobConfig = configService.GetConfigForJobType(config.Type.ToString())
-                match jobConfig with
-                | Some jobConfig ->
-                    let delay = TimeSpan.Parse(jobConfig.DefaultDelay)
-                    return config.From.Add(delay)
-                | None ->
-                    logger.Warning("No configuration found for job type {JobType}, using default delay", config.Type)
-                    return config.From.Add(TimeSpan.FromHours(1.0))
+                return config.From.Add(TimeSpan.FromSeconds(10.0))
         }
 
     member private this.TriggerJobAsync(job: Job, version: uint64) =

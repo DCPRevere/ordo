@@ -8,26 +8,16 @@ open System.Text.Json
 open Ordo.Core
 open System.Threading.Tasks
 
-let calculateScheduledTime (sch: Schedule) (ts: DateTimeOffset option) (jtcs: JobTypeConfigService) : Task<DateTimeOffset> =
+let calculateScheduledTime (sch: Schedule) (ts: DateTimeOffset option) : Task<DateTimeOffset> =
     task {
         match sch with
         | Immediate -> return (ts |> Option.defaultValue DateTimeOffset.MinValue)
         | Precise time -> return time
         | Configured configuredSch ->
-            let! configOpt = jtcs.GetConfig(configuredSch.Type)
-            match configOpt with
-            | Some jobTypeConfig ->
-                match TimeSpan.TryParse(jobTypeConfig.DefaultDelay) with
-                | true, delayTimeSpan ->
-                    return configuredSch.From.Add(delayTimeSpan)
-                | false, _ ->
-                    return (ts |> Option.defaultValue DateTimeOffset.MinValue)
-            | None ->
-                return (ts |> Option.defaultValue DateTimeOffset.MinValue)
+            return configuredSch.From.Add(TimeSpan.FromSeconds(10.0))
     }
 
-
-let initialState (evt: JobScheduledV2) (jtcs: JobTypeConfigService) : Job =
+let initialState (evt: JobScheduledV2) : Job =
     { Id = evt.Id
       Status = JobStatus.StatusScheduled
       Schedule = evt.Schedule
@@ -50,7 +40,6 @@ let applyEvent (currentState: Job) (event: JobEvent) : Job =
                 | Schedule.Immediate -> Immediate
                 | Schedule.Precise time -> Precise time
                 | Schedule.Configured config -> Configured { Type = config.Type; From = config.From }
-                | _ -> failwith $"Unknown job type: {evt.Schedule}"
             { currentState with
                 Id = evt.Id
                 Status = JobStatus.StatusScheduled
@@ -95,11 +84,11 @@ let applyEvent (currentState: Job) (event: JobEvent) : Job =
         else
             currentState
 
-let reconstructState (jobId: Guid) (resolvedEvents: seq<ResolvedEvent>) (jtcs: JobTypeConfigService) : Job =
+let reconstructState (jobId: Guid) (resolvedEvents: seq<ResolvedEvent>) : Job =
     let events = resolvedEvents |> Seq.choose resolve |> Seq.toList
     match events with
     | [] -> failwith "No events found for job"
     | EventScheduled evt :: rest ->
-        let startState = initialState evt jtcs
+        let startState = initialState evt
         rest |> Seq.fold applyEvent startState
     | _ -> failwith "First event must be JobScheduled"

@@ -88,7 +88,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
                         (fun _ -> 
                             match jobEvent with
                             | EventScheduled evt ->
-                                let initialJob = initialState evt jtcs
+                                let initialJob = initialState evt
                                 if not state.IsStartupPhase then
                                     logger.LogInformation("New job {JobId} created with status {Status}", 
                                         jobId, initialJob.Status)
@@ -198,7 +198,13 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
             |> Seq.map (fun jobState -> 
                 let job = jobState.Job
                 let version = jobState.Version
-                (job, version))
+                let scheduledTime = 
+                    match job.Schedule with
+                    | Immediate -> DateTimeOffset.UtcNow
+                    | Precise time -> time
+                    | Configured config -> config.From.Add(TimeSpan.FromSeconds(10.0)) // Using 10 second default delay
+                let jobWithScheduledTime = { job with ScheduledTime = Some scheduledTime }
+                (jobWithScheduledTime, version))
             |> Seq.toList
         logger.LogDebug("Retrieved {Count} jobs", jobs.Length)
         jobs

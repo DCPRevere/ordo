@@ -14,20 +14,6 @@ open Ordo.Synchroniser
 open System
 open System.Threading.Tasks
 
-type JobStatusDto = {
-    JobId: Guid
-    JobType: string
-    Status: string
-    ScheduledTime: DateTimeOffset
-    Payload: string option
-    LastUpdated: DateTimeOffset
-    TriggerTime: DateTimeOffset option
-    ExecutionTime: DateTimeOffset option
-    ResultData: string option
-    FailureMessage: string option
-    CancellationReason: string option
-} 
-
 type JobStatusResponse = {
     Jobs: Job list
     Status: JobStatusCounts

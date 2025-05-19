@@ -16,7 +16,6 @@
     <Compile Include="DTOs/ScheduleJobResponse.fs" />
     <Compile Include="DTOs/SystemMetricsResponse.fs" />
 
-    <Compile Include="JobTypeConfigService.fs" />
     <Compile Include="Rebuilding.fs" />
   </ItemGroup>
 
