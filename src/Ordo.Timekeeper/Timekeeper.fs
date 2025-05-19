@@ -2,9 +2,9 @@ namespace Ordo.Timekeeper
 
 open EventStore.Client
 open Microsoft.Extensions.Logging
-open Ordo.Core
+open Ordo.Core.DTOs
 open Ordo.Core.Events
-open Ordo.Core.Job
+open Ordo.Core.Rebuilding
 open Ordo.Core.Model
 open Ordo.Synchroniser
 open Serilog
@@ -99,15 +99,6 @@ type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, confi
             | Schedule.Immediate -> return DateTimeOffset.UtcNow
             | Schedule.Precise time -> return time
             | Schedule.Configured config ->
-                let! jobConfig = configService.GetConfigForJobType(config.Type.ToString())
-                return
-                    match jobConfig with
-                    | Some jobConfig ->
-                        let delay = TimeSpan.Parse(jobConfig.DefaultDelay)
-                        config.From.Add(delay)
-                    | None ->
-                        logger.Warning("No configuration found for job type {JobType}, using default delay", config.Type)
-                        config.From.Add(TimeSpan.FromHours(1.0))
         }
 
     member private this.TriggerJobAsync(job: Job, version: uint64) =

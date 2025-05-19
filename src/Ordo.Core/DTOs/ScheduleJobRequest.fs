@@ -1,7 +1,5 @@
-namespace Ordo.Api.DTOs
+namespace Ordo.Core.DTOs
 
-open System
-open Ordo.Core.Job
 open Ordo.Core.Model
 
 type ScheduleJobRequest =

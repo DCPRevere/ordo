@@ -7,10 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="DTOs/ScheduleJobRequest.fs" />
-    <Compile Include="DTOs/ScheduleJobResponse.fs" />
-    <Compile Include="DTOs/SystemMetricsResponse.fs" />
-    <Compile Include="DTOs/JobTypeDelayConfig.fs" />
     <Compile Include="Controllers/JobsController.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

@@ -323,15 +323,21 @@
                 let bVal = b[currentSort.column];
                 
                 if (currentSort.column === 'status') {
-                    aVal = aVal || '';
-                    bVal = bVal || '';
+                    aVal = aVal.Case.replace('Status', '');
+                    bVal = bVal.Case.replace('Status', '');
+                }
+                
+                if (currentSort.column === 'jobType') {
+                    aVal = a.schedule.Case + (a.schedule.Case === 'Configured' ? ` (${a.schedule.Fields[0].type.Case})` : '');
+                    bVal = b.schedule.Case + (b.schedule.Case === 'Configured' ? ` (${b.schedule.Fields[0].type.Case})` : '');
+
                 }
 
                 const result = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
                 return currentSort.direction === 'asc' ? result : -result;
             }).filter(job => {
-                if (job.status?.Case === 'StatusExecuted' && !showExecuted) return false;
-                if (job.status?.Case === 'StatusCancelled' && !showCancelled) return false;
+                if (job.status.Case === 'StatusExecuted' && !showExecuted) return false;
+                if (job.status.Case === 'StatusCancelled' && !showCancelled) return false;
                 return true;
             });
             
@@ -343,19 +349,18 @@
                 mainRow.className = 'expandable-row';
                 mainRow.onclick = () => toggleJobDetails(job.id);
                 mainRow.innerHTML = `
-                    <td>${getScheduleType(job.schedule)}</td>
-                    <td><span class="badge ${getStatusBadgeClass(job.status)} status-badge">${getStatusText(job.status)}</span></td>
-                    <td>${getScheduleDisplay(job.schedule)}</td>
+                    <td>${job.schedule.Case}${job.schedule.Case === 'Configured' ? ` (${job.schedule.Fields[0].type.Case})` : ''}</td>
+                    <td><span class="badge ${getStatusBadgeClass(job.status)} status-badge">${job.status.Case.replace('Status', '')}</span></td>
+                    <td>${formatDate(job.scheduledTime)}</td>
                     <td>${formatDate(job.triggerTime)}</td>
                     <td>${formatDate(job.executionTime)}</td>
                     <td>
-                        ${job.status?.Case === 'StatusScheduled' || job.status?.Case === 'StatusTriggered' 
-                          ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelJob('${job.id}')">
+                        ${job.status.Case === 'StatusScheduled' || job.status.Case === 'StatusTriggered' ? 
+                            `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); cancelJob('${job.id}')">
                                 <i class="bi bi-x-circle"></i> Cancel
-                            </button>` 
-                            : ''}
-                        ${job.status?.Case === 'StatusScheduled' 
-                            ? `<button class="btn btn-warning btn-sm ms-1" onclick="event.stopPropagation(); showRescheduleModal('${job.id}')">
+                            </button>` : ''}
+                        ${job.status.Case === 'StatusScheduled' ? 
+                            `<button class="btn btn-warning btn-sm ms-1" onclick="event.stopPropagation(); showRescheduleModal('${job.id}')">
                                 <i class="bi bi-clock"></i> Reschedule
                             </button>` 
                             : ''}
@@ -373,6 +378,7 @@
                                 <div class="row">
                                     <div class="col-md-6">
                                         <p><strong>Job ID:</strong> ${job.id}</p>
+                                        <p><strong>Schedule:</strong> ${job.schedule.Case}${job.schedule.Case === 'Configured' ? ` (${job.schedule.Fields[0].type.Case})` : ''}</p>
                                         <p><strong>Last Updated:</strong> ${formatDate(job.lastUpdated)}</p>
                                     </div>
                                     <div class="col-md-6">
@@ -399,18 +405,28 @@
         }
 
         async function cancelJob(jobId) {
+            if (!jobId) {
+                console.error('Cannot cancel job: Invalid job ID');
+                return;
+            }
+
+            console.log('Attempting to cancel job:', jobId);
             try {
                 const response = await fetch(`/api/jobs/${jobId}`, {
                     method: 'DELETE'
                 });
                 
                 if (response.ok) {
+                    console.log('Successfully cancelled job:', jobId);
                     refreshJobs();
                 } else {
-                    console.error('Failed to cancel job:', await response.text());
+                    const errorText = await response.text();
+                    console.error('Failed to cancel job:', jobId, 'Error:', errorText);
+                    alert('Failed to cancel job: ' + errorText);
                 }
             } catch (error) {
-                console.error('Error cancelling job:', error);
+                console.error('Error cancelling job:', jobId, 'Error:', error);
+                alert('Error cancelling job: ' + error.message);
             }
         }
 
@@ -489,7 +505,7 @@
                 }
                 
                 // Preserve expanded state
-                const expandedJobs = jobs.filter(job => job.isExpanded).map(job => job.id);
+                const expandedJobs = jobs.filter(j => j.isExpanded).map(j => j.id);
                 jobs = data.jobs;
                 jobs.forEach(job => {
                     job.isExpanded = expandedJobs.includes(job.id);

@@ -22,8 +22,16 @@ type Schedule =
     | Precise of DateTimeOffset
     | Configured of ConfiguredSchedule
 
-type JobTypeDelayConfig = {
-    DefaultDelay: string
-    MaxRetries: int
-    RetryDelayMultiplier: float
-}
+type Job =
+    { Id: string
+      Status: JobStatus
+      Schedule: Schedule
+      ScheduledTime: DateTimeOffset option
+      Payload: string option
+      LastUpdated: DateTimeOffset
+      TriggerTime: DateTimeOffset option
+      ExecutionTime: DateTimeOffset option
+      ResultData: string option
+      FailureMessage: string option
+      CancellationReason: string option
+    }

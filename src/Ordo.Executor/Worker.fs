@@ -5,7 +5,7 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
-open Ordo.Core.Job
+open Ordo.Core.Rebuilding
 open Ordo.Core.Events
 open Ordo.Synchroniser
 open EventStore.Client

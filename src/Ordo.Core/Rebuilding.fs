@@ -1,34 +1,27 @@
-module Ordo.Core.Job
+module Ordo.Core.Rebuilding
 
 open System
 open Ordo.Core.Events
 open EventStore.Client
 open Ordo.Core.Model
 open System.Text.Json
+open Ordo.Core
+open System.Threading.Tasks
 
-type Job =
-    { Id: string
-      Status: JobStatus
-      Schedule: Schedule
-      Payload: string option
-      LastUpdated: DateTimeOffset
-      TriggerTime: DateTimeOffset option
-      ExecutionTime: DateTimeOffset option
-      ResultData: string option
-      FailureMessage: string option
-      CancellationReason: string option
+let calculateScheduledTime (sch: Schedule) (ts: DateTimeOffset option) : Task<DateTimeOffset> =
+    task {
+        match sch with
+        | Immediate -> return (ts |> Option.defaultValue DateTimeOffset.MinValue)
+        | Precise time -> return time
+        | Configured configuredSch ->
+            return configuredSch.From.Add(TimeSpan.FromSeconds(10.0))
     }
 
 let initialState (evt: JobScheduledV2) : Job =
-    let schedule = 
-        match evt.Schedule with
-        | Schedule.Immediate -> Immediate
-        | Schedule.Precise time -> Precise time
-        | Schedule.Configured config -> Configured { Type = config.Type; From = config.From }
-        | _ -> failwith $"Unknown job type: {evt.Schedule}"
     { Id = evt.Id
       Status = JobStatus.StatusScheduled
-      Schedule = schedule
+      Schedule = evt.Schedule
+      ScheduledTime = None
       Payload = Some evt.Payload
       LastUpdated = evt.Metadata.Timestamp |> Option.defaultValue DateTimeOffset.MinValue
       TriggerTime = None
@@ -47,7 +40,6 @@ let applyEvent (currentState: Job) (event: JobEvent) : Job =
                 | Schedule.Immediate -> Immediate
                 | Schedule.Precise time -> Precise time
                 | Schedule.Configured config -> Configured { Type = config.Type; From = config.From }
-                | _ -> failwith $"Unknown job type: {evt.Schedule}"
             { currentState with
                 Id = evt.Id
                 Status = JobStatus.StatusScheduled

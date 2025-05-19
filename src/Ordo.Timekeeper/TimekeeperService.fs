@@ -29,9 +29,8 @@ type TimekeeperService(
     let settings = EventStoreClientSettings.Create(timekeeperConfig.EventStoreConnectionString)
     let client = new EventStoreClient(settings)
     let httpClient = new HttpClient(BaseAddress = Uri(timekeeperConfig.ApiBaseUrl))
-    let configService = new JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
-    let timekeeper = new Timekeeper(client, loggerFactory, timekeeperConfig, configService)
-    
+    let timekeeper = new Timekeeper(client, loggerFactory, timekeeperConfig)
+
     let rec waitForApiReady (ct: CancellationToken) =
         task {
             try
@@ -62,10 +61,6 @@ type TimekeeperService(
             if not apiReady then
                 log.Error("Failed to connect to API after multiple attempts")
                 return ()
-            
-            log.Information("Fetching job type configurations from API")
-            do! configService.RefreshConfigs()
-            log.Information("Job type configurations fetched successfully")
             
             log.Information("Starting Timekeeper")
             do! timekeeper.Start()

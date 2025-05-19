@@ -6,7 +6,7 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open EventStore.Client
-open Ordo.Core.Job
+open Ordo.Core.Rebuilding
 open Ordo.Core.Model
 open Ordo.Core.Events
 open Ordo.Core
@@ -220,7 +220,13 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
             |> Seq.map (fun jobState -> 
                 let job = jobState.Job
                 let version = jobState.Version
-                (job, version))
+                let scheduledTime = 
+                    match job.Schedule with
+                    | Immediate -> DateTimeOffset.UtcNow
+                    | Precise time -> time
+                    | Configured config -> config.From.Add(TimeSpan.FromSeconds(10.0)) // Using 10 second default delay
+                let jobWithScheduledTime = { job with ScheduledTime = Some scheduledTime }
+                (jobWithScheduledTime, version))
             |> Seq.toList
         logger.LogDebug("Retrieved {Count} jobs", jobs.Length)
         jobs
