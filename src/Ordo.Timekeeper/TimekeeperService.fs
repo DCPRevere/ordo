@@ -7,6 +7,7 @@ open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Configuration
 open EventStore.Client
+open Ordo.Core
 open Ordo.Core.Events
 open Ordo.Core.EventStore
 open Ordo.Synchroniser
@@ -15,8 +16,9 @@ open Serilog.Events
 open System.Net.Http
 
 type TimekeeperService(
+    loggerFactory: ILoggerFactory,
     config: IConfiguration,
-    loggerFactory: ILoggerFactory) =
+    jtcs: JobTypeConfigService) =
     inherit BackgroundService()
     
     let log = Log.ForContext<TimekeeperService>()
@@ -28,7 +30,6 @@ type TimekeeperService(
     let settings = EventStoreClientSettings.Create(timekeeperConfig.EventStoreConnectionString)
     let client = new EventStoreClient(settings)
     let httpClient = new HttpClient(BaseAddress = Uri(timekeeperConfig.ApiBaseUrl))
-    let configService = new JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
     let timekeeper = new Timekeeper(client, loggerFactory, timekeeperConfig)
     
     let rec waitForApiReady (ct: CancellationToken) =
@@ -63,7 +64,7 @@ type TimekeeperService(
                 return ()
             
             log.Information("Fetching job type configurations from API")
-            do! configService.RefreshConfigs()
+            do! jtcs.RefreshConfigs()
             log.Information("Job type configurations fetched successfully")
             
             log.Information("Starting Timekeeper")

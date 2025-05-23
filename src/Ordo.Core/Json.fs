@@ -6,6 +6,8 @@ open FSharp.SystemTextJson
 
 let configure (options: JsonSerializerOptions) =
     options.PropertyNameCaseInsensitive <- true
+    options.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
+    options.Converters.Add(JsonStringEnumConverter())
     let fsOptions = 
         JsonFSharpOptions.Default()
             .WithUnionAdjacentTag()
@@ -26,7 +28,9 @@ let tryDeserialise<'a> (data: string) =
     try
         Some (JsonSerializer.Deserialize<'a>(data, defaultOptions))
     with
-    | _ -> None
+    | ex -> 
+        printfn "Deserialization error: %A" ex
+        None
 
 let serialise<'a> (data: 'a) =
     JsonSerializer.Serialize(data, defaultOptions)

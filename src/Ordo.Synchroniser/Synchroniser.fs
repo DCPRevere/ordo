@@ -44,7 +44,7 @@ type SynchroniserState =
       Metrics: SynchroniserMetrics
       mutable IsStartupPhase: bool }
 
-type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
+type ProjectionSynchroniser(logger: ILogger, client: EventStoreClient, jtcs: JobTypeConfigService) =
     let metrics = {
         TotalJobs = 0L
         EventsProcessed = 0L

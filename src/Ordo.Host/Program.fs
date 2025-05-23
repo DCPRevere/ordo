@@ -12,6 +12,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
 open System.Text.Json
 open EventStore.Client
+open Ordo.Core
 open Ordo.Api
 open Ordo.Api.Controllers
 open Ordo.Timekeeper
@@ -19,6 +20,7 @@ open Ordo.Executor
 open Ordo.Synchroniser
 open Serilog
 open Serilog.Extensions.Hosting
+open System.Net.Http
 
 module Host =
     type Component =
@@ -46,11 +48,19 @@ module Host =
         
         services.AddSingleton(client) |> ignore
         services.AddSingleton(persistentSubClient) |> ignore
+
+        let httpClient = new HttpClient()
+        httpClient.BaseAddress <- System.Uri("http://localhost:5000")
+        services.AddSingleton(httpClient) |> ignore
+
+        let loggerFactory = services.BuildServiceProvider().GetRequiredService<ILoggerFactory>()
+        let jtcs = new JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
+        services.AddSingleton(jtcs) |> ignore
         
         services.AddSingleton<ProjectionSynchroniser>(fun sp ->
             let client = sp.GetRequiredService<EventStoreClient>()
             let logger = sp.GetRequiredService<ILogger<ProjectionSynchroniser>>()
-            ProjectionSynchroniser(client, logger)
+            ProjectionSynchroniser(logger, client, jtcs)
         ) |> ignore
         
         services.AddHostedService<SynchroniserHostedService>() |> ignore
@@ -118,12 +128,12 @@ module Host =
         app.UseRouting() |> ignore
         app.UseHttpsRedirection() |> ignore
         app.UseDefaultFiles(DefaultFilesOptions(
-            FileProvider = Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+            FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
                 Path.Combine(AppContext.BaseDirectory, "wwwroot")
             )
         )) |> ignore
         app.UseStaticFiles(StaticFileOptions(
-            FileProvider = Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+            FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
                 Path.Combine(AppContext.BaseDirectory, "wwwroot")
             )
         )) |> ignore
@@ -172,8 +182,8 @@ module Host =
         
         let configureSerilog (context: HostBuilderContext) (services: IServiceProvider) (loggerConfiguration: Serilog.LoggerConfiguration) =
             loggerConfiguration
-                .ReadFrom.Configuration(context.Configuration) // Allows configuration from appsettings.json
-                .ReadFrom.Services(services) // For DI-based enrichers, sinks, etc.
+                .ReadFrom.Configuration(context.Configuration)
+                .ReadFrom.Services(services)
                 .Enrich.FromLogContext()
                 .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} [{SourceContext}]{NewLine}{Exception}")
             |> ignore
@@ -199,13 +209,14 @@ module Host =
 
     [<EntryPoint>]
     let main argv =
-        Log.Logger <- Serilog.LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Information)
-            .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-            .Enrich.FromLogContext()
-            .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] [Bootstrap] {Message:lj}{NewLine}{Exception}")
-            .CreateBootstrapLogger()
+        let bootstrapLogger = 
+            Serilog.LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Information)
+                .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+                .Enrich.FromLogContext()
+                .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] [Bootstrap] {Message:lj}{NewLine}{Exception}")
+                .CreateBootstrapLogger()
         
         let result =
             try
@@ -223,20 +234,20 @@ module Host =
                         printfn "  --executor   Run only the Executor component"
                         printfn "  --all        Run all components together"
                         Log.Error("Invalid command-line arguments provided for Ordo Host.")
-                        Api // Return a valid Component type, but we'll exit before using it
+                        Api
                 
                 if comp = Api || comp = All || comp = Timekeeper || comp = Executor then
                     runComponent comp argv
                     Log.Information("Ordo Host shut down successfully.")
-                    0 // Success exit code
+                    0
                 else
                     Log.Error("Component could not be determined due to invalid arguments.")
-                    1 // Error code
+                    1
 
             with
             | ex ->
                 Log.Fatal(ex, "Ordo Host terminated unexpectedly!")
-                1 // Failure exit code
+                1
         
         Log.CloseAndFlush()
-        result // Return the exit code
+        result

@@ -3,6 +3,7 @@ module Ordo.Core.JobTypeConfig
 open System
 open System.Collections.Concurrent
 open Microsoft.Extensions.Configuration
+open Serilog
 
 type JobTypeDelayConfig = {
     DefaultDelay: TimeSpan
@@ -12,6 +13,7 @@ type JobTypeDelayConfig = {
 
 type JobTypeConfiguration(config: IConfiguration) =
     let delayConfigs = ConcurrentDictionary<string, JobTypeDelayConfig>()
+    let log = Log.ForContext<JobTypeConfiguration>()
     
     do
         // Load initial configurations from appsettings.json
@@ -23,6 +25,7 @@ type JobTypeConfiguration(config: IConfiguration) =
                 MaxRetries = section.GetValue<int>("MaxRetries", 3)
                 RetryDelayMultiplier = section.GetValue<float>("RetryDelayMultiplier", 2.0)
             }
+            log.Information("Loaded config from appsettings for job type {JobType}: {Config}", jobType, config)
             delayConfigs.TryAdd(jobType, config) |> ignore
         )
     

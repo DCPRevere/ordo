@@ -26,9 +26,10 @@ type JobTypeConfigService(httpClient: HttpClient, logger: ILogger<JobTypeConfigS
                 let! response = httpClient.GetAsync($"api/jobs/types/{jobType}/config")
                 if response.IsSuccessStatusCode then
                     let! content = response.Content.ReadAsStringAsync()
+                    log.Information("Raw config JSON for job type {JobType}: {Json}", jobType, content)
                     match tryDeserialise<JobTypeDelayConfig> content with
                     | None ->
-                        log.Warning("Failed to deserialize configuration for job type {JobType} from API", jobType)
+                        log.Warning("Failed to deserialize configuration for job type {JobType} from API. JSON: {Json} ExpectedType: {Type}", jobType, content, typeof<JobTypeDelayConfig>.FullName)
                         return None
                     | Some config ->
                         log.Information("Retrieved configuration for job type {JobType} from API: {Config}", jobType, config)
@@ -45,12 +46,13 @@ type JobTypeConfigService(httpClient: HttpClient, logger: ILogger<JobTypeConfigS
             let! response = httpClient.GetAsync("api/jobs/types/config")
             if response.IsSuccessStatusCode then
                 let! content = response.Content.ReadAsStringAsync()
+                log.Information("Raw config map JSON: {Json}", content)
                 match tryDeserialise<Map<ConfiguredScheduleType, JobTypeDelayConfig>> content with
                 | None ->
-                    log.Warning("Failed to deserialize configurations from API")
+                    log.Warning("Failed to deserialize configurations from API. JSON: {Json} ExpectedType: {Type}", content, typeof<Map<ConfiguredScheduleType, JobTypeDelayConfig>>.FullName)
                     configCache <- Map.empty
                 | Some configs ->
-                    log.Information("Retrieved {Count} job type configurations from API", configs.Count)
+                    log.Information("Retrieved {Count} job type configurations from API: {Configs}", configs.Count, configs)
                     configCache <- configs
             else
                 log.Warning("Failed to refresh configurations from API: {StatusCode}", response.StatusCode)

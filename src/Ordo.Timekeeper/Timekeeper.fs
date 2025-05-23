@@ -2,6 +2,7 @@ namespace Ordo.Timekeeper
 
 open EventStore.Client
 open Microsoft.Extensions.Logging
+open Ordo.Core
 open Ordo.Core.DTOs
 open Ordo.Core.Events
 open Ordo.Core.Rebuilding
@@ -22,9 +23,9 @@ type TimekeeperConfig = {
 type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, config: TimekeeperConfig) =
     let mutable isRunning = false
     let mutable cancellationTokenSource = new CancellationTokenSource()
-    let synchroniser = ProjectionSynchroniser(esClient, loggerFactory.CreateLogger<ProjectionSynchroniser>())
     let httpClient = new HttpClient(BaseAddress = Uri(config.ApiBaseUrl))
-    let configService = JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
+    let jtcs = JobTypeConfigService(httpClient, loggerFactory.CreateLogger<JobTypeConfigService>())
+    let synchroniser = ProjectionSynchroniser(loggerFactory.CreateLogger<ProjectionSynchroniser>(), esClient, jtcs)
     let logger = Log.ForContext<Timekeeper>()
 
     member this.Start() =
@@ -100,7 +101,7 @@ type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, confi
             | Schedule.Immediate -> return DateTimeOffset.UtcNow
             | Schedule.Precise time -> return time
             | Schedule.Configured config ->
-                let! jobConfig = configService.GetConfigForJobType(config.Type.ToString())
+                let! jobConfig = jtcs.GetConfig(config.Type)
                 match jobConfig with
                 | Some jobConfig ->
                     let delay = TimeSpan.Parse(jobConfig.DefaultDelay)

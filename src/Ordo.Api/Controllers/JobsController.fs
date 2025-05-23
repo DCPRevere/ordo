@@ -156,24 +156,28 @@ type JobsController(
 
     // GET /api/jobs/types/config
     [<HttpGet("types/config")>]
-    member this.GetAllJobTypeConfigs() : ActionResult<Map<string, JobTypeDelayConfig>> =
+    member this.GetAllJobTypeConfigs() : ActionResult<Map<ConfiguredScheduleType, JobTypeDelayConfig>> =
         logger.LogInformation("Retrieving all job type configurations")
         let configs = 
             config.GetSection("JobTypes").GetChildren()
             |> Seq.map (fun section ->
                 let delaySeconds = section.GetValue<int>("DelaySeconds")
-                section.Key, { 
+                let jobType = 
+                    match section.Key with
+                    | "ExpireEori" -> ConfiguredScheduleType.ExpireEori
+                    | _ -> ConfiguredScheduleType.ExpireEori // Default to ExpireEori for now
+                jobType, { 
                     DefaultDelay = TimeSpan.FromSeconds(float delaySeconds).ToString("hh\:mm\:ss")
                     MaxRetries = 3
                     RetryDelayMultiplier = 2.0 
                 })
             |> Map.ofSeq
-        logger.LogInformation("Returning {Count} job type configurations", configs.Count)
-        ActionResult<Map<string, JobTypeDelayConfig>>(configs)
+        logger.LogInformation("Returning {Count} job type configurations: {Configs}", configs.Count, configs)
+        ActionResult<Map<ConfiguredScheduleType, JobTypeDelayConfig>>(configs)
 
     // GET /api/jobs/types/{jobType}/config
     [<HttpGet("types/{jobType}/config")>]
-    member this.GetJobTypeConfig(jobType: string) : ActionResult<JobTypeDelayConfig> =
+    member this.GetJobTypeConfig([<FromRoute>] jobType: ConfiguredScheduleType) : ActionResult<JobTypeDelayConfig> =
         logger.LogInformation("Retrieving configuration for job type {JobType}", jobType)
         let configSection = config.GetSection($"JobTypes:{jobType}")
         if configSection.Exists() then
@@ -191,7 +195,7 @@ type JobsController(
 
     // PUT /api/jobs/types/{jobType}/config
     [<HttpPut("types/{jobType}/config")>]
-    member this.UpdateJobTypeConfig(jobType: string, [<FromBody>] config: JobTypeDelayConfig) : ActionResult =
+    member this.UpdateJobTypeConfig([<FromRoute>] jobType: ConfiguredScheduleType, [<FromBody>] config: JobTypeDelayConfig) : ActionResult =
         logger.LogInformation("Updating configuration for job type {JobType}: {Config}", jobType, config)
         // TODO: Save to configuration store
         this.Ok() :> ActionResult
