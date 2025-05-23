@@ -10,7 +10,6 @@
     <Compile Include="Model.fs" />
     <Compile Include="Events.fs" />
     <Compile Include="EventStore.fs" />
-    <Compile Include="DTOs/JobTypeDelayConfig.fs" />
     <Compile Include="DTOs/ScheduleJobRequest.fs" />
     <Compile Include="DTOs/ScheduleJobResponse.fs" />
     <Compile Include="DTOs/SystemMetricsResponse.fs" />

@@ -1,4 +1,6 @@
-﻿open System
+﻿namespace Ordo.Host
+
+open System
 open System.IO
 open System.Threading.Tasks
 open System.Net.Http
@@ -49,18 +51,18 @@ module Host =
         services.AddSingleton(persistentSubClient) |> ignore
         
         services.AddHttpClient() |> ignore
-        services.AddSingleton<Ordo.Core.JobTypeConfigService>(fun sp ->
-            let httpClientFactory = sp.GetRequiredService<IHttpClientFactory>()
-            let httpClient = httpClientFactory.CreateClient() :> HttpClient
-            let logger = sp.GetRequiredService<ILogger<Ordo.Core.JobTypeConfigService>>()
-            new Ordo.Core.JobTypeConfigService(httpClient, logger)
-        ) |> ignore
+        // services.AddSingleton<Ordo.Core.JobTypeConfigService>(fun sp ->
+        //     let httpClientFactory = sp.GetRequiredService<IHttpClientFactory>()
+        //     let httpClient = httpClientFactory.CreateClient() :> HttpClient
+        //     let logger = sp.GetRequiredService<ILogger<Ordo.Core.JobTypeConfigService>>()
+        //     new Ordo.Core.JobTypeConfigService(httpClient, logger)
+        // ) |> ignore
         
         services.AddSingleton<ProjectionSynchroniser>(fun sp ->
             let client = sp.GetRequiredService<EventStoreClient>()
             let logger = sp.GetRequiredService<ILogger<ProjectionSynchroniser>>()
-            let configService = sp.GetRequiredService<Ordo.Core.JobTypeConfigService>()
-            new ProjectionSynchroniser(client, logger, configService)
+            // let configService = sp.GetRequiredService<Ordo.Core.JobTypeConfigService>()
+            new ProjectionSynchroniser(client, logger)
         ) |> ignore
         
         services.AddHostedService<SynchroniserHostedService>() |> ignore
@@ -186,7 +188,10 @@ module Host =
                 .ReadFrom.Services(services) // For DI-based enrichers, sinks, etc.
                 .Enrich.FromLogContext()
                 .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} [{SourceContext}]{NewLine}{Exception}")
-            |> ignore
+                .WriteTo.File("logs/ordo-host-.log", 
+                    rollingInterval = RollingInterval.Day,
+                    outputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} [{SourceContext}]{NewLine}{Exception}")
+                |> ignore
 
         match comp with
         | Api | All ->
@@ -207,46 +212,82 @@ module Host =
         | :? IHost as host -> host.Run()
         | _ -> failwith "Unexpected application type"
 
+    let validateConfig (config: IConfiguration) =
+        let connectionString = 
+            match config.GetValue<string>("EventStore:ConnectionString") with
+            | null | "" -> raise (InvalidOperationException("EventStore:ConnectionString configuration is required"))
+            | cs -> cs
+        
+        let apiBaseUrl = 
+            match config.GetValue<string>("Api:BaseUrl") with
+            | null | "" -> raise (InvalidOperationException("Api:BaseUrl configuration is required"))
+            | url -> url
+        
+        ()  // Return unit to complete the block
+
     [<EntryPoint>]
     let main argv =
-        Log.Logger <- Serilog.LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Information)
-            .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-            .Enrich.FromLogContext()
-            .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] [Bootstrap] {Message:lj}{NewLine}{Exception}")
-            .CreateBootstrapLogger()
-        
-        let result =
-            try
-                Log.Information("Starting Ordo Host...")
-                let comp =
-                    match argv with
-                    | [| "--api" |] -> Api
-                    | [| "--timekeeper" |] -> Timekeeper
-                    | [| "--executor" |] -> Executor
-                    | [| "--all" |] -> All
-                    | _ -> 
-                        printfn "Usage: dotnet run [--api|--timekeeper|--executor|--all]"
-                        printfn "  --api        Run only the API component"
-                        printfn "  --timekeeper Run only the Timekeeper component"
-                        printfn "  --executor   Run only the Executor component"
-                        printfn "  --all        Run all components together"
-                        Log.Error("Invalid command-line arguments provided for Ordo Host.")
-                        Api // Return a valid Component type, but we'll exit before using it
-                
-                if comp = Api || comp = All || comp = Timekeeper || comp = Executor then
-                    runComponent comp argv
-                    Log.Information("Ordo Host shut down successfully.")
-                    0 // Success exit code
-                else
-                    Log.Error("Component could not be determined due to invalid arguments.")
-                    1 // Error code
+        try
+            let host = 
+                Host.CreateDefaultBuilder(argv)
+                    .UseSerilog(fun context services config ->
+                        config
+                            .ReadFrom.Configuration(context.Configuration)
+                            .ReadFrom.Services(services)
+                            .Enrich.FromLogContext()
+                            .WriteTo.Console(outputTemplate = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} [{SourceContext}]{NewLine}{Exception}")
+                            .WriteTo.File("logs/ordo-host-.log", 
+                                rollingInterval = RollingInterval.Day,
+                                outputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} [{SourceContext}]{NewLine}{Exception}")
+                            |> ignore
+                    )
+                    .ConfigureServices(fun services ->
+                        services.AddControllers() |> ignore
+                        services.AddEndpointsApiExplorer() |> ignore
+                        services.AddSwaggerGen() |> ignore
+                        
+                        services.AddSingleton<EventStoreClient>(fun sp ->
+                            let config = sp.GetRequiredService<IConfiguration>()
+                            validateConfig config
+                            let connectionString = 
+                                match config.GetValue<string>("EventStore:ConnectionString") with
+                                | null | "" -> raise (InvalidOperationException("EventStore:ConnectionString configuration is required"))
+                                | cs -> cs
+                            let settings = EventStoreClientSettings.Create(connectionString)
+                            new EventStoreClient(settings)
+                        ) |> ignore
+                        
+                        services.AddSingleton<ProjectionSynchroniser>(fun sp ->
+                            let client = sp.GetRequiredService<EventStoreClient>()
+                            let logger = sp.GetRequiredService<ILogger<ProjectionSynchroniser>>()
+                            new ProjectionSynchroniser(client, logger)
+                        ) |> ignore
+                        
+                        services.AddSingleton<JobsController>() |> ignore
+                        services.AddSingleton<TimekeeperService>() |> ignore
+                        services.AddSingleton<Worker>() |> ignore
+                        services.AddHttpClient() |> ignore
+                    )
+                    .ConfigureWebHostDefaults(fun webHostBuilder ->
+                        webHostBuilder
+                            .Configure(fun app ->
+                                app.UseSwagger() |> ignore
+                                app.UseSwaggerUI() |> ignore
+                                app.UseRouting() |> ignore
+                                app.UseEndpoints(fun endpoints ->
+                                    endpoints.MapControllers() |> ignore
+                                ) |> ignore
+                            )
+                            |> ignore
+                    )
+                    .Build()
 
-            with
-            | ex ->
-                Log.Fatal(ex, "Ordo Host terminated unexpectedly!")
-                1 // Failure exit code
-        
-        Log.CloseAndFlush()
-        result // Return the exit code
+            host.Run()
+            0
+        with 
+        | :? InvalidOperationException as ex ->
+            printfn "Configuration Error: %s" ex.Message
+            1
+        | ex ->
+            printfn "Unhandled Error: %s" ex.Message
+            1

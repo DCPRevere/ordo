@@ -1,7 +1,6 @@
 module Ordo.Core.Events
 
 open System
-open System.Text.Json
 open EventStore.Client
 open System.Text.RegularExpressions
 open Ordo.Core.Json

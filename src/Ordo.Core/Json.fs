@@ -2,7 +2,6 @@ module Ordo.Core.Json
 
 open System.Text.Json
 open System.Text.Json.Serialization
-open FSharp.SystemTextJson
 
 let configure (options: JsonSerializerOptions) =
     options.PropertyNameCaseInsensitive <- true

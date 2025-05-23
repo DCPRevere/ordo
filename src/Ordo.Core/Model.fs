@@ -22,6 +22,10 @@ type Schedule =
     | Precise of DateTimeOffset
     | Configured of ConfiguredSchedule
 
+type JobTypeDelayConfig = {
+    DefaultDelay: string
+}
+
 type Job =
     { Id: string
       Status: JobStatus

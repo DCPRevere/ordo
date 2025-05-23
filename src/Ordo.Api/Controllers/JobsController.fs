@@ -142,38 +142,15 @@ type JobsController(
 
     // GET /api/jobs/types/config
     [<HttpGet("types/config")>]
-    member this.GetAllJobTypeConfigs() : ActionResult<Map<string, JobTypeDelayConfig>> =
-        logger.LogInformation("Retrieving all job type configurations")
-        let configs = 
-            config.GetSection("JobTypes").GetChildren()
-            |> Seq.map (fun section ->
-                let delaySeconds = section.GetValue<int>("DelaySeconds")
-                section.Key, { 
-                    DefaultDelay = TimeSpan.FromSeconds(float delaySeconds).ToString("hh\:mm\:ss")
-                    MaxRetries = 3
-                    RetryDelayMultiplier = 2.0 
-                })
-            |> Map.ofSeq
-        logger.LogInformation("Returning {Count} job type configurations", configs.Count)
+    member _.GetJobTypeConfigs() : ActionResult<Map<string, JobTypeDelayConfig>> =
+        let configs = Map.empty
         ActionResult<Map<string, JobTypeDelayConfig>>(configs)
 
     // GET /api/jobs/types/{jobType}/config
     [<HttpGet("types/{jobType}/config")>]
-    member this.GetJobTypeConfig(jobType: string) : ActionResult<JobTypeDelayConfig> =
-        logger.LogInformation("Retrieving configuration for job type {JobType}", jobType)
-        let configSection = config.GetSection($"JobTypes:{jobType}")
-        if configSection.Exists() then
-            let delaySeconds = configSection.GetValue<int>("DelaySeconds")
-            let config = { 
-                DefaultDelay = TimeSpan.FromSeconds(float delaySeconds).ToString("hh\:mm\:ss")
-                MaxRetries = 3
-                RetryDelayMultiplier = 2.0 
-            }
-            logger.LogInformation("Found configuration for job type {JobType}: {Config}", jobType, config)
-            ActionResult<JobTypeDelayConfig>(config)
-        else
-            logger.LogWarning("No configuration found for job type {JobType}", jobType)
-            ActionResult<JobTypeDelayConfig>(this.NotFound())
+    member _.GetJobTypeConfig(jobType: string) : ActionResult<JobTypeDelayConfig> =
+        let config = { DefaultDelay = "10" }
+        ActionResult<JobTypeDelayConfig>(config)
 
     // PUT /api/jobs/types/{jobType}/config
     [<HttpPut("types/{jobType}/config")>]

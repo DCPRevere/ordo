@@ -42,10 +42,9 @@ type SynchroniserState =
       Jobs: ConcurrentDictionary<string, JobStateWithVersion>
       mutable Subscription: IDisposable option
       Metrics: SynchroniserMetrics
-      mutable IsStartupPhase: bool
-      ConfigService: JobTypeConfigService }
+      mutable IsStartupPhase: bool }
 
-type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configService: JobTypeConfigService) =
+type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger) =
     let metrics = {
         TotalJobs = 0L
         EventsProcessed = 0L
@@ -61,8 +60,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
           Jobs = ConcurrentDictionary<string, JobStateWithVersion>() 
           Subscription = None
           Metrics = metrics
-          IsStartupPhase = true
-          ConfigService = configService }
+          IsStartupPhase = true }
 
     let handleEvent (subscription: StreamSubscription) (resolvedEvent: ResolvedEvent) (cancellationToken: CancellationToken) : Task =
         task {
@@ -163,14 +161,6 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
         | true, state -> Some (state.Job, state.Version)
         | false, _ -> None
 
-    member private this.GetConfiguredDelay(jobType: string) : Task<TimeSpan> =
-        task {
-            let! config = configService.GetConfigForJobType(jobType)
-            return match config with
-                   | Some config -> TimeSpan.Parse(config.DefaultDelay)
-                   | None -> TimeSpan.FromHours(1.0)
-        }
-
     member this.GetDueJobs(currentTime: DateTimeOffset) : Task<Job list> =
         task {
             let mutable result = []
@@ -183,8 +173,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
                     | Precise scheduledTime when scheduledTime <= currentTime ->
                         result <- jobState.Job :: result
                     | Configured config ->
-                        let! delay = this.GetConfiguredDelay(config.Type.ToString())
-                        let scheduledTime = config.From.Add(delay)
+                        let scheduledTime = config.From.Add(TimeSpan.FromSeconds(10.0))
                         if scheduledTime <= currentTime then
                             result <- jobState.Job :: result
                     | _ -> ()
@@ -204,8 +193,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
                     | Precise scheduledTime when scheduledTime <= currentTime ->
                         result <- (jobState.Job, jobState.Version) :: result
                     | Configured config ->
-                        let! delay = this.GetConfiguredDelay(config.Type.ToString())
-                        let scheduledTime = config.From.Add(delay)
+                        let scheduledTime = config.From.Add(TimeSpan.FromSeconds(10.0))
                         if scheduledTime <= currentTime then
                             result <- (jobState.Job, jobState.Version) :: result
                     | _ -> ()
@@ -224,14 +212,14 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
                     match job.Schedule with
                     | Immediate -> DateTimeOffset.UtcNow
                     | Precise time -> time
-                    | Configured config -> config.From.Add(TimeSpan.FromSeconds(10.0)) // Using 10 second default delay
+                    | Configured config -> config.From.Add(TimeSpan.FromSeconds(10.0))
                 let jobWithScheduledTime = { job with ScheduledTime = Some scheduledTime }
                 (jobWithScheduledTime, version))
             |> Seq.toList
         logger.LogDebug("Retrieved {Count} jobs", jobs.Length)
         jobs
 
-    member this.GetJobStatusCounts() : JobStatusCounts =
+    member private this.GetJobStatusCounts() : JobStatusCounts =
         let currentTime = DateTimeOffset.UtcNow
         state.Jobs.Values
         |> Seq.fold (fun counts jobState ->
@@ -244,8 +232,7 @@ type ProjectionSynchroniser(client: EventStoreClient, logger: ILogger, configSer
                 | Precise _ -> 
                     { counts with FutureScheduled = counts.FutureScheduled + 1 }
                 | Configured config ->
-                    let delay = TimeSpan.Parse(configService.GetConfigForJobType(config.Type.ToString()).Result.Value.DefaultDelay)
-                    let scheduledTime = config.From.Add(delay)
+                    let scheduledTime = config.From.Add(TimeSpan.FromSeconds(10.0))
                     if scheduledTime <= currentTime then
                         { counts with DueScheduled = counts.DueScheduled + 1 }
                     else

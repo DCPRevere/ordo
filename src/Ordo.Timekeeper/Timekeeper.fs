@@ -19,10 +19,10 @@ type TimekeeperConfig = {
     ApiBaseUrl: string
 }
 
-type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, config: TimekeeperConfig, configService: JobTypeConfigService) =
+type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, config: TimekeeperConfig) =
     let mutable isRunning = false
     let mutable cancellationTokenSource = new CancellationTokenSource()
-    let synchroniser = ProjectionSynchroniser(esClient, loggerFactory.CreateLogger<ProjectionSynchroniser>(), configService)
+    let synchroniser = ProjectionSynchroniser(esClient, loggerFactory.CreateLogger<ProjectionSynchroniser>())
     let httpClient = new HttpClient(BaseAddress = Uri(config.ApiBaseUrl))
     let logger = Log.ForContext<Timekeeper>()
 
@@ -98,7 +98,7 @@ type Timekeeper(esClient: EventStoreClient, loggerFactory: ILoggerFactory, confi
             match job.Schedule with
             | Schedule.Immediate -> return DateTimeOffset.UtcNow
             | Schedule.Precise time -> return time
-            | Schedule.Configured config ->
+            | Schedule.Configured config -> return config.From.Add(TimeSpan.FromSeconds(10.0))
         }
 
     member private this.TriggerJobAsync(job: Job, version: uint64) =
